@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Guess the Person</title>
+  <meta name="description" content="Two-player Guess Who. Ask yes/no questions and find your opponent's secret person." />
+  <meta name="theme-color" content="#1d2142" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Guess Who" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Shared hair-texture patterns, so hair color is never conveyed by color alone (colorblind support). -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <pattern id="tex-brown" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect width="1.4" height="5" fill="rgba(0,0,0,.35)" />
+      </pattern>
+      <pattern id="tex-blond" width="5" height="5" patternUnits="userSpaceOnUse">
+        <circle cx="2.5" cy="2.5" r="1" fill="rgba(120,80,0,.45)" />
+      </pattern>
+      <pattern id="tex-red" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <path d="M0 3H6M3 0V6" stroke="rgba(0,0,0,.3)" stroke-width="1.2" />
+      </pattern>
+      <pattern id="tex-grey" width="6" height="4" patternUnits="userSpaceOnUse">
+        <rect width="6" height="1.3" fill="rgba(255,255,255,.75)" />
+      </pattern>
+      <pattern id="card-back" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect width="12" height="12" fill="#3d4b8f" />
+        <rect width="6" height="12" fill="#34417c" />
+      </pattern>
+    </defs>
+  </svg>
+
+  <div id="app">
+    <!-- Shown when the page isn't served by the game server (e.g. opened as a file or via Live Server). -->
+    <section id="screen-noserver" class="screen">
+      <h1 class="logo">Guess<span>the</span>Person</h1>
+      <p>Can't reach the game server.</p>
+      <p class="muted" style="text-align:center;max-width:460px">Run <code>npm start</code> in the project folder, then open
+        <a href="http://localhost:3000" style="color:var(--accent)">http://localhost:3000</a>.
+        Opening <code>index.html</code> directly won't work.</p>
+    </section>
+
+    <!-- HOME (active by default so it shows even before the script runs) -->
+    <section id="screen-home" class="screen active">
+      <h1 class="logo">Guess<span>the</span>Person</h1>
+      <p id="welcome" class="welcome hidden"></p>
+      <label class="field">
+        <span>Your name</span>
+        <input id="name-input" maxlength="16" placeholder="Enter your name" autocomplete="nickname" enterkeyhint="done" required />
+      </label>
+      <button id="btn-create" class="btn primary big">Create Room</button>
+      <label class="check">
+        <input type="checkbox" id="private-input" />
+        <span>🔒 Private room <span class="muted">(join by code only)</span></span>
+      </label>
+      <div class="divider"><span>or join a friend</span></div>
+      <div class="join-row">
+        <input id="code-input" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters"
+               autocorrect="off" spellcheck="false" enterkeyhint="go" />
+        <button id="btn-join" class="btn big">Join</button>
+      </div>
+
+      <!-- Live list of public rooms -->
+      <section class="rooms" aria-labelledby="rooms-title">
+        <div class="rooms-head">
+          <h2 id="rooms-title">Rooms</h2>
+          <span class="live"><i></i>Live</span>
+        </div>
+        <div id="rooms-list" aria-live="polite"><p class="rooms-empty">Loading rooms…</p></div>
+      </section>
+
+      <button id="btn-install" class="btn ghost hidden">Install app</button>
+      <p id="ios-install" class="muted small hidden">To install on iPhone: tap <b>Share</b> then <b>Add to Home Screen</b>.</p>
+    </section>
+
+    <!-- LOBBY -->
+    <section id="screen-lobby" class="screen">
+      <p class="muted">Share this room code with your opponent</p>
+      <div id="lobby-code" class="room-code"></div>
+      <p id="lobby-visibility" class="muted small"></p>
+      <div class="lobby-actions">
+        <button id="btn-share" class="btn primary">Share invite</button>
+        <button id="btn-copy" class="btn">Copy code</button>
+      </div>
+      <p class="waiting"><span class="dots"></span>Waiting for opponent</p>
+      <button class="btn ghost btn-leave">Leave room</button>
+    </section>
+
+    <!-- PICK -->
+    <section id="screen-pick" class="screen wide">
+      <header class="bar">
+        <div>
+          <h2>Pick your secret person</h2>
+          <span id="pick-status" class="muted small"></span>
+        </div>
+      </header>
+      <div class="board-wrap"><div id="pick-board" class="board"></div></div>
+      <div class="action-bar always">
+        <button id="btn-lock" class="btn primary" disabled>Lock In</button>
+      </div>
+    </section>
+
+    <!-- GAME (also shows the result overlay) -->
+    <section id="screen-game" class="screen wide">
+      <header class="game-top">
+        <div id="turn-indicator" class="turn"></div>
+        <div class="secret-chip" title="Your secret person">
+          <span class="muted tiny">YOU ARE</span>
+          <div id="my-secret"></div>
+        </div>
+      </header>
+      <div id="opp-banner" class="banner hidden"></div>
+      <div id="last-answer" class="last-answer"></div>
+      <div id="guess-hint" class="banner guess hidden">Tap the person you think it is. <button id="btn-cancel-guess" class="btn small">Cancel</button></div>
+
+      <div class="game-layout">
+        <div class="board-wrap"><div id="game-board" class="board"></div></div>
+        <div id="sheet-backdrop" class="sheet-backdrop"></div>
+        <aside id="side" class="side">
+          <div class="sheet-handle" aria-hidden="true"></div>
+          <div class="panel">
+            <h3 id="questions-title">Ask a question</h3>
+            <div id="q-groups" class="q-groups" role="tablist" aria-label="Question categories"></div>
+            <div id="questions" class="questions" role="tabpanel"></div>
+            <div id="ask-bar" class="ask-bar">
+              <span id="ask-text" class="ask-text"></span>
+              <button id="btn-ask-confirm" class="btn primary" disabled>Ask</button>
+            </div>
+            <button class="btn danger full desktop-only btn-guess">Make Final Guess</button>
+          </div>
+          <div class="panel">
+            <h3>Log</h3>
+            <ol id="log" class="log"></ol>
+          </div>
+        </aside>
+      </div>
+
+      <!-- Phone-only bottom actions -->
+      <nav class="action-bar">
+        <button id="btn-ask" class="btn primary">Ask a question</button>
+        <button class="btn danger btn-guess">Guess</button>
+      </nav>
+    </section>
+  </div>
+
+  <!-- Result overlay -->
+  <div id="result" class="overlay hidden">
+    <div class="modal">
+      <h2 id="result-title"></h2>
+      <p id="result-reason" class="muted"></p>
+      <div class="reveal">
+        <div><div class="muted">Your person</div><div id="reveal-me"></div></div>
+        <div><div class="muted">Their person</div><div id="reveal-opp"></div></div>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-rematch" class="btn primary">Rematch</button>
+        <button class="btn ghost btn-leave">Leave</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Guess confirm -->
+  <div id="confirm" class="overlay hidden">
+    <div class="modal">
+      <h2>Final guess?</h2>
+      <div id="confirm-card"></div>
+      <p class="muted">A wrong guess loses the game.</p>
+      <div class="modal-actions">
+        <button id="btn-confirm-yes" class="btn danger">Guess</button>
+        <button id="btn-confirm-no" class="btn ghost">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="avatar.js"></script>
+  <script src="client.js"></script>
+</body>
+</html>

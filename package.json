@@ -1,0 +1,20 @@
+{
+  "name": "guess-who",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Two-player Guess the Person game (MVP)",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "check-board": "node server/characters.js",
+    "test": "node test/smoke.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.4"
+  }
+}

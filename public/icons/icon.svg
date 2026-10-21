@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Full-bleed background; the artwork stays inside the central safe zone so it works as a maskable icon. -->
+  <rect width="512" height="512" fill="#1d2142"/>
+  <circle cx="256" cy="200" r="260" fill="#2c3270" opacity=".7"/>
+  <g transform="rotate(-8 256 270)">
+    <rect x="150" y="128" width="212" height="270" rx="26" fill="#ffffff"/>
+    <rect x="164" y="142" width="184" height="200" rx="16" fill="#9bf6ff"/>
+    <path d="M196 342 Q200 290 256 286 Q312 290 316 342 Z" fill="#457b9d"/>
+    <rect x="243" y="262" width="26" height="30" fill="#e2b48a"/>
+    <ellipse cx="256" cy="226" rx="46" ry="54" fill="#e2b48a"/>
+    <path d="M208 224 Q206 168 256 166 Q306 168 304 224 Q296 192 256 190 Q216 192 208 224 Z" fill="#272121"/>
+    <circle cx="238" cy="228" r="6" fill="#111"/>
+    <circle cx="274" cy="228" r="6" fill="#111"/>
+    <path d="M240 254 Q256 266 272 254" stroke="#5a2e1e" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <rect x="164" y="352" width="184" height="30" rx="8" fill="#e9ebf5"/>
+  </g>
+  <circle cx="352" cy="146" r="52" fill="#ffcc4d"/>
+  <text x="352" y="170" text-anchor="middle" font-family="system-ui, sans-serif" font-size="72" font-weight="900" fill="#2a2200">?</text>
+</svg>
