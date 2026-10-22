@@ -16,7 +16,7 @@ const GROUPS = [
   { id: "hair",   label: "Hair style" },
   { id: "color",  label: "Hair colour" },
   { id: "facial", label: "Facial hair" },
-  { id: "extras", label: "Accessories" },
+  { id: "extras", label: "Extras" },
 ];
 
 const QUESTIONS = [

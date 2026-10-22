@@ -27,7 +27,7 @@ Open two browser windows: Create Room in one, Join with the code in the other.
 |---|---|
 | `server/index.js` | Socket.IO server: rooms, phases (LOBBY → PICKING → PLAYING → FINISHED), no turn timer, 30s disconnect forfeit, reconnects, rematch |
 | `server/characters.js` | Board generator: 30 characters, every pair differs in ≥2 traits, every question answers "yes" for 10–80% of the board |
-| `server/questions.js` | Data-driven questions, batched into groups (Person, Hair style, Hair colour, Facial hair, Accessories). Each has full text, a short caption and the example face(s) for its picture tile. Add a question here and it appears in the UI automatically |
+| `server/questions.js` | Data-driven questions, batched into groups (Person, Hair style, Hair colour, Facial hair, Extras). Each has full text, a short caption and the example face(s) for its picture tile. Add a question here and it appears in the UI automatically |
 | `public/avatar.js` | Layered SVG face renderer (hair shape + texture, glasses, earrings, beard/mustache, hat) |
 | `public/client.js` | UI: renders server state and sends intents only |
 | `public/sw.js`, `public/manifest.webmanifest`, `public/icons/` | PWA: offline shell, install metadata, app icons (`icon.svg` is the source) |
@@ -35,9 +35,9 @@ Open two browser windows: Create Room in one, Join with the code in the other.
 
 ## Socket events
 
-Client → server: `room:create`, `room:join`, `room:rejoin`, `room:leave`, `pick:secret`, `turn:ask`, `turn:guess`, `rematch:request`. All take an ack callback that returns `{ ok, error? }`.
+Client → server: `lobby:watch` / `lobby:unwatch` (live public room list on the home screen), `room:create` (`{ playerName, private }`), `room:join`, `room:rejoin`, `room:leave`, `pick:secret`, `turn:ask`, `turn:guess`, `rematch:request`. All take an ack callback that returns `{ ok, error? }`.
 
-Server → client: `room:state` (a personalized view; the opponent's secret is only included once the game is FINISHED), `game:start`, `turn:changed`, `ask:result`, `game:over`, `player:disconnected`, `player:reconnected`.
+Server → client: `room:state` (a personalized view; the opponent's secret is only included once the game is FINISHED), `game:start`, `turn:changed`, `ask:result`, `game:over`, `player:disconnected`, `player:reconnected`, `lobby:rooms` (public rooms: codes, names and phases only; private rooms are never listed), `server:hello` (client build id; pages reload when it changes).
 
 ## Notes
 

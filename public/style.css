@@ -28,6 +28,7 @@ body {
   color: var(--text);
   font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   overscroll-behavior: none;          /* no pull-to-refresh mid-game */
+  overflow-x: clip;                   /* never scroll sideways, whatever the content */
   touch-action: manipulation;         /* no double-tap zoom delay */
   -webkit-tap-highlight-color: transparent;
 }
@@ -137,9 +138,9 @@ input.invalid { border-color: var(--danger); animation: shake .35s; }
 @keyframes flash { from { background: #4b5299; } to { background: var(--panel); } }
 
 /* ---------- Board ---------- */
-.board-wrap { display: flex; justify-content: center; }
+.board-wrap { display: flex; justify-content: center; min-width: 0; width: 100%; }
 .board {
-  display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px;
+  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px;
   width: 100%;
   /* The 6x5 grid is about 1.07x as tall as it is wide; cap the width so it fits the screen height. */
   max-width: max(220px, calc((100dvh - var(--chrome)) / 1.1));
@@ -150,7 +151,7 @@ input.invalid { border-color: var(--danger); animation: shake .35s; }
 .card .face, .card .back { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: 10px; overflow: hidden; }
 .card .face { background: #fff; display: flex; flex-direction: column; border: 3px solid transparent; }
 .card .face svg { display: block; width: 100%; flex: 1; min-height: 0; }
-.card .name { background: #fff; color: #222; text-align: center; font-weight: 700; font-size: 13px; padding: 2px 0 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .name { background: #fff; color: #222; text-align: center; font-weight: 700; font-size: clamp(9px, 2.6vw, 13px); padding: 2px 0 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card .back { transform: rotateX(180deg); background: #3d4b8f; }
 .card .back svg { width: 100%; height: 100%; display: block; }
 .card.selected .face { border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
@@ -163,12 +164,12 @@ input.invalid { border-color: var(--danger); animation: shake .35s; }
 
 /* ---------- Game layout (desktop) ---------- */
 #screen-game { --chrome: 170px; }
-.game-layout { display: grid; grid-template-columns: 1fr 340px; gap: 16px; align-items: start; }
+.game-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
 .side { display: flex; flex-direction: column; gap: 12px; }
 .panel { background: var(--panel); border-radius: var(--radius); padding: 12px; }
 .panel h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
 /* Question categories (one icon per group of related questions) */
-.q-groups { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 10px; }
+.q-groups { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
 .g-tab {
   position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px;
   padding: 6px 2px; min-width: 0; font: inherit; cursor: pointer;
@@ -184,7 +185,7 @@ input.invalid { border-color: var(--danger); animation: shake .35s; }
 .g-count { position: absolute; top: -7px; right: -5px; background: var(--accent); color: var(--accent-text); font-size: 10px; font-weight: 800; padding: 1px 5px; border-radius: 999px; }
 
 /* Question picture tiles */
-.questions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 2px; }
+.questions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 2px; }
 .q {
   position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px;
   padding: 6px 6px 8px; min-width: 0;
@@ -287,7 +288,7 @@ input.invalid { border-color: var(--danger); animation: shake .35s; }
   .sheet-handle { display: block; width: 40px; height: 5px; border-radius: 3px; background: var(--panel-2); margin: 2px auto 6px; }
   .sheet-backdrop { display: block; position: fixed; inset: 0; z-index: 15; background: rgba(5,6,20,.6); opacity: 0; pointer-events: none; transition: opacity .2s; }
   .sheet-open .sheet-backdrop { opacity: 1; pointer-events: auto; }
-  .questions { grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); }
+  .questions { grid-template-columns: repeat(auto-fit, minmax(min(72px, 100%), 1fr)); }
   .g-icon svg { width: 44px; height: 44px; }
   .g-label { font-size: 11px; }
   .ask-bar .btn { min-height: 48px; }
@@ -310,6 +311,17 @@ input.invalid { border-color: var(--danger); animation: shake .35s; }
   .secret-chip { padding: 4px 6px 4px 8px; }
   .last-answer { font-size: 13px; padding: 6px 10px; }
   .reveal > div, #confirm-card { width: 100px; }
+}
+
+@media (max-width: 360px) {
+  #app { padding-left: calc(6px + var(--safe-left)); padding-right: calc(6px + var(--safe-right)); }
+  .board { gap: 3px; }
+  .card .face { border-width: 1.5px; }
+  .g-label { font-size: 9.5px; }
+  .g-icon svg { width: 36px; height: 36px; }
+  .action-bar .btn { font-size: 15px; }
+  .room-row { padding: 6px; gap: 8px; }
+  .lobby-actions { flex-wrap: wrap; justify-content: center; }
 }
 
 /* Landscape phones: move the action buttons to a right-hand column so the board gets the full height. */

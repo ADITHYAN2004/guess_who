@@ -83,7 +83,11 @@
   // ---------- render ----------
   function render() {
     setLobbyWatch(!state); // the rooms list only updates while the home screen is shown
-    if (!state) { showScreen("home"); hideOverlays(); return; }
+    if (!state) {
+      // Greet returning players when the home screen opens (not while they're typing).
+      if (!$("screen-home").classList.contains("active")) showWelcome();
+      showScreen("home"); hideOverlays(); return;
+    }
     const phase = state.phase;
 
     if (phase === "LOBBY") {
@@ -442,7 +446,9 @@
     store.set(NAME_KEY, cleanName(nameInput.value) || null);
     nameInput.classList.remove("invalid");
   });
-  nameInput.addEventListener("blur", () => { nameInput.value = cleanName(nameInput.value); showWelcome(); });
+  // Only tidy the text on blur. Don't show/hide anything here: a layout shift between
+  // mousedown and mouseup would make the click on "Create Room" miss the button.
+  nameInput.addEventListener("blur", () => { nameInput.value = cleanName(nameInput.value); });
   nameInput.addEventListener("keydown", e => { if (e.key === "Enter") nameInput.blur(); });
 
   // Returns the name, or null (with a hint) if it's empty.
@@ -460,7 +466,6 @@
   function onJoined(res) {
     if (!res?.ok) return toast(res?.error || "Could not join.");
     store.set(SESSION, { code: res.code, playerId: res.playerId });
-    showWelcome();
   }
 
   $("btn-create").addEventListener("click", () => {
