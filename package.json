@@ -8,10 +8,15 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "check-board": "node server/characters.js",
-    "test": "node test/smoke.js"
+    "test": "node test/smoke.js",
+    "start:redis": "REDIS_URL=${REDIS_URL:-redis://localhost:6380} node server/index.js",
+    "redis:up": "docker compose up -d redis",
+    "test:board": "node test/board.js"
   },
   "dependencies": {
+    "@socket.io/redis-adapter": "^8.3.0",
     "express": "^4.21.2",
+    "redis": "^4.7.1",
     "socket.io": "^4.8.1"
   },
   "devDependencies": {

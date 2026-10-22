@@ -2,9 +2,11 @@
 // Usage: npm start (in another terminal), then: npm test
 const { io } = require("socket.io-client");
 const URL = process.env.URL || "http://localhost:3000";
+// Optional: put the second player on another server process (tests Redis-shared rooms).
+const URL_B = process.env.URL_B || URL;
 const assert = require("assert");
 
-const connect = () => new Promise(res => { const s = io(URL, { forceNew: true }); s.on("connect", () => res(s)); });
+const connect = (url = URL) => new Promise(res => { const s = io(url, { forceNew: true }); s.on("connect", () => res(s)); });
 const emit = (s, ev, data) => new Promise(res => s.emit(ev, data, res));
 const nextState = (s, pred = () => true) => new Promise(res => {
   const h = st => { if (pred(st)) { s.off("room:state", h); res(st); } };
@@ -12,7 +14,7 @@ const nextState = (s, pred = () => true) => new Promise(res => {
 });
 
 (async () => {
-  const a = await connect(), b = await connect();
+  const a = await connect(), b = await connect(URL_B);
   const created = await emit(a, "room:create", { playerName: "Alice" });
   assert(created.ok && /^[A-Z]{4}$/.test(created.code), "create room");
 

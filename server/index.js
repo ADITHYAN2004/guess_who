@@ -1,16 +1,28 @@
 // Authoritative game server: owns rooms, secrets, turns, answers and win checks.
 // Clients only render state and send intents.
+//
+// Storage: rooms are kept in memory by default. Set REDIS_URL to keep them in Redis instead,
+// so games survive restarts and several server processes can share them (see server/store.js).
 const path = require("path");
 const http = require("http");
+const os = require("os");
+const fs = require("fs");
 const crypto = require("crypto");
 const express = require("express");
 const { Server } = require("socket.io");
 const { generateBoard } = require("./characters");
 const { QUESTION_MAP, PUBLIC_QUESTIONS, GROUPS } = require("./questions");
+const { createStore } = require("./store");
 
 const PORT = process.env.PORT || 3000;
+// Identifies this server process across restarts, so it can find the players it was serving.
+const SERVER_ID = process.env.SERVER_ID || `${os.hostname()}:${PORT}`;
 const DISCONNECT_MS = 30_000;  // forfeit / cleanup grace period
 const PHASE = { LOBBY: "LOBBY", PICKING: "PICKING", PLAYING: "PLAYING", FINISHED: "FINISHED" };
+// Quick reactions: a fixed set (no free text means nothing to moderate).
+const REACTIONS = ["😂", "🤔", "😱", "👏", "😎", "🙈"];
+const REACT_GAP_MS = 800; // per-player rate limit
+const NO_SAVE = Symbol("no-save"); // returned by a room change that didn't modify anything
 
 const app = express();
 app.use(express.static(path.join(__dirname, "..", "public"), {
@@ -23,13 +35,12 @@ app.use(express.static(path.join(__dirname, "..", "public"), {
 const server = http.createServer(app);
 const io = new Server(server, { pingInterval: 10_000, pingTimeout: 8_000 });
 
-/** @type {Map<string, any>} */
-const rooms = new Map();
+const store = createStore();
+const dcTimers = new Map(); // `${code}:${playerId}` -> forfeit timer (local to this process)
 
 // ---------- client build id ----------
 // A hash of everything in public/. Clients get it on connect and reload themselves when it
 // changes, so an open tab never keeps running old code after an update or server restart.
-const fs = require("fs");
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 
 function hashDir(dir, hash = crypto.createHash("sha1")) {
@@ -60,14 +71,7 @@ try {
 // ---------- helpers ----------
 
 const CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // no I or O (they look like 1 and 0)
-function newRoomCode() {
-  let code;
-  do {
-    code = Array.from({ length: 4 }, () => CODE_LETTERS[crypto.randomInt(CODE_LETTERS.length)]).join("");
-  } while (rooms.has(code));
-  return code;
-}
-
+const randomCode = () => Array.from({ length: 4 }, () => CODE_LETTERS[crypto.randomInt(CODE_LETTERS.length)]).join("");
 const newId = () => crypto.randomBytes(12).toString("hex");
 
 function cleanName(name) {
@@ -75,14 +79,51 @@ function cleanName(name) {
   return n || "Player";
 }
 
+const newPlayer = name => ({ id: newId(), name: cleanName(name), socketId: null, server: null, connected: false, secret: null, rematch: false });
 const opponentOf = (room, playerId) => room.players.find(p => p.id !== playerId);
 const findPlayer = (room, playerId) => room.players.find(p => p.id === playerId);
 const isValidCharacter = (room, id) => Number.isInteger(id) && id >= 0 && id < room.board.length;
+const reply = (ack, payload) => typeof ack === "function" && ack(payload);
+const fail = (ack, error) => { reply(ack, { ok: false, error }); return NO_SAVE; };
 
 function newBoardFor(room) {
   room.board = generateBoard();
   room.boardId = newId(); // lets clients reset their local flip-downs
 }
+
+// Load a room under its lock, run `fn(room)` (which may change it), then save it.
+// `room` is null if it doesn't exist. Return NO_SAVE from fn to skip the write.
+async function withRoom(code, fn) {
+  if (!code) return fn(null);
+  const release = await store.lock(code);
+  try {
+    const room = await store.get(code);
+    const result = await fn(room);
+    if (room && !room.deleted && result !== NO_SAVE) await store.save(room);
+    return result;
+  } finally {
+    await release();
+  }
+}
+
+// Run a player's action in their room. Rejects sockets that aren't (or are no longer) in it.
+function inRoom(socket, ack, fn) {
+  return withRoom(socket.data.code, room => {
+    const player = room && findPlayer(room, socket.data.playerId);
+    if (!player || player.socketId !== socket.id) return fail(ack, "Not in a room.");
+    return fn(room, player);
+  });
+}
+
+// Wraps a socket handler so storage errors (e.g. Redis down) answer the client instead of crashing.
+const safe = handler => async (data, ack) => {
+  try {
+    await handler(data ?? {}, ack);
+  } catch (err) {
+    console.error("[handler]", err);
+    reply(ack, { ok: false, error: "Server busy, please try again." });
+  }
+};
 
 // Build the per-player view of the room. The opponent's secret is only included once the game is FINISHED.
 function viewFor(room, player) {
@@ -109,9 +150,37 @@ function viewFor(room, player) {
     winnerId: room.winnerId,
     reason: room.reason,
     secrets: finished ? Object.fromEntries(room.players.map(p => [p.id, p.secret])) : null,
+    summary: finished ? room.summary : null,
+    nextFirst: finished ? room.nextFirst : null,
+    reactions: REACTIONS,
   };
 }
 
+// End-of-game stats per player: how many questions they asked, and their best question
+// (the one that ruled out the most people from their view of the board).
+function buildSummary(room) {
+  const out = {};
+  for (const p of room.players) {
+    let remaining = room.board;
+    let asked = 0, best = null;
+    for (const e of room.log) {
+      if (e.type !== "ask" || e.playerId !== p.id) continue;
+      const q = QUESTION_MAP.get(e.questionId);
+      if (!q) continue;
+      asked++;
+      const before = remaining.length;
+      remaining = remaining.filter(c => Boolean(q.test(c)) === e.answer);
+      const ruledOut = before - remaining.length;
+      if (!best || ruledOut > best.ruledOut) {
+        best = { questionId: q.id, short: q.short, text: q.text, answer: e.answer, ruledOut, left: remaining.length };
+      }
+    }
+    out[p.id] = { asked, best };
+  }
+  return out;
+}
+
+// io.to(socketId) reaches the socket on whichever server it's connected to (via the Redis adapter).
 function sendState(room) {
   for (const p of room.players) {
     if (p.connected && p.socketId) io.to(p.socketId).emit("room:state", viewFor(room, p));
@@ -124,8 +193,8 @@ function sendState(room) {
 // Private rooms and rooms with nobody connected are left out.
 const LOBBY_CHANNEL = "lobby-watchers";
 
-function publicRoomList() {
-  return [...rooms.values()]
+async function publicRoomList() {
+  return (await store.list())
     .filter(r => !r.private && r.players.some(p => p.connected))
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 50)
@@ -138,13 +207,15 @@ function publicRoomList() {
     }));
 }
 
-// Debounced broadcast to everyone looking at the home screen.
+// Debounced broadcast to everyone looking at the home screen (on every server).
 let lobbyTimer = null;
 function lobbyChanged() {
   if (lobbyTimer) return;
-  lobbyTimer = setTimeout(() => {
+  lobbyTimer = setTimeout(async () => {
     lobbyTimer = null;
-    io.to(LOBBY_CHANNEL).emit("lobby:rooms", { rooms: publicRoomList(), serverNow: Date.now() });
+    try {
+      io.to(LOBBY_CHANNEL).emit("lobby:rooms", { rooms: await publicRoomList(), serverNow: Date.now() });
+    } catch (err) { console.error("[lobby]", err.message); }
   }, 250);
 }
 
@@ -159,6 +230,9 @@ function finishGame(room, winnerId, reason) {
   room.turn = null;
   room.winnerId = winnerId;
   room.reason = reason;
+  room.summary = buildSummary(room);
+  // The loser goes first in a rematch.
+  room.nextFirst = room.players.find(p => p.id !== winnerId)?.id ?? null;
   for (const p of room.players) p.rematch = false;
   io.to(room.code).emit("game:over", {
     winnerId,
@@ -174,148 +248,179 @@ function startPicking(room) {
   room.turn = null;
   room.winnerId = null;
   room.reason = null;
+  room.summary = null;
   for (const p of room.players) { p.secret = null; p.rematch = false; }
 }
 
-function deleteRoom(room) {
-  for (const p of room.players) clearTimeout(p.dcTimer);
-  rooms.delete(room.code);
+async function deleteRoom(room) {
+  for (const p of room.players) clearDcTimer(room.code, p.id);
+  room.deleted = true; // tells withRoom not to save it back
+  await store.delete(room.code);
   lobbyChanged();
 }
 
 function attachSocket(socket, room, player) {
-  clearTimeout(player.dcTimer);
-  player.dcTimer = null;
-  // If this player had another tab open, the newest socket wins.
-  if (player.socketId && player.socketId !== socket.id) {
-    io.sockets.sockets.get(player.socketId)?.leave(room.code);
-  }
+  clearDcTimer(room.code, player.id);
+  // If this player had another tab open, the newest socket wins (works across servers).
+  if (player.socketId && player.socketId !== socket.id) io.in(player.socketId).socketsLeave(room.code);
   player.socketId = socket.id;
+  player.server = SERVER_ID;
   player.connected = true;
   socket.data.code = room.code;
   socket.data.playerId = player.id;
   socket.join(room.code);
 }
 
-// Resolve the room and player for an incoming intent, or null if the socket isn't in a game.
-function ctx(socket) {
-  const room = rooms.get(socket.data.code);
-  if (!room) return null;
-  const player = findPlayer(room, socket.data.playerId);
-  if (!player || player.socketId !== socket.id) return null;
-  return { room, player };
+// ---------- disconnect grace timers ----------
+function clearDcTimer(code, playerId) {
+  const key = `${code}:${playerId}`;
+  clearTimeout(dcTimers.get(key));
+  dcTimers.delete(key);
 }
 
-const reply = (ack, payload) => typeof ack === "function" && ack(payload);
+// If the player is still gone after the grace period: forfeit (or delete an empty room).
+function startDcTimer(code, playerId, ms = DISCONNECT_MS) {
+  clearDcTimer(code, playerId);
+  dcTimers.set(`${code}:${playerId}`, setTimeout(() => {
+    dcTimers.delete(`${code}:${playerId}`);
+    withRoom(code, async room => {
+      const player = room && findPlayer(room, playerId);
+      if (!player || player.connected) return NO_SAVE; // came back (maybe on another server)
+      if (room.players.every(p => !p.connected)) return deleteRoom(room);
+      if (room.phase === PHASE.PICKING || room.phase === PHASE.PLAYING) {
+        finishGame(room, opponentOf(room, player.id).id, "forfeit");
+        return;
+      }
+      return NO_SAVE;
+    }).catch(err => console.error("[dc-timer]", err.message));
+  }, ms));
+}
 
 // ---------- socket handlers ----------
 
 io.on("connection", socket => {
   socket.emit("server:hello", { build: BUILD });
 
-  socket.on("lobby:watch", () => {
+  socket.on("lobby:watch", safe(async () => {
     socket.join(LOBBY_CHANNEL);
-    socket.emit("lobby:rooms", { rooms: publicRoomList(), serverNow: Date.now() });
-  });
+    socket.emit("lobby:rooms", { rooms: await publicRoomList(), serverNow: Date.now() });
+  }));
   socket.on("lobby:unwatch", () => socket.leave(LOBBY_CHANNEL));
 
-  socket.on("room:create", (data = {}, ack) => {
-    if (ctx(socket)) return reply(ack, { ok: false, error: "Already in a room." });
+  // True if this socket is currently seated in a room.
+  const seated = async () => {
+    if (!socket.data.code) return false;
+    const room = await store.get(socket.data.code);
+    return Boolean(room && findPlayer(room, socket.data.playerId)?.socketId === socket.id);
+  };
+
+  socket.on("room:create", safe(async (data, ack) => {
+    if (await seated()) return fail(ack, "Already in a room.");
+    const player = newPlayer(data.playerName);
     const room = {
-      code: newRoomCode(),
+      code: null,
       private: data.private === true, // private rooms are hidden from the public list
       createdAt: Date.now(),
       phase: PHASE.LOBBY,
-      players: [],
+      players: [player],
       board: null,
       boardId: null,
       turn: null,
       log: [],
       winnerId: null,
       reason: null,
+      nextFirst: null,
     };
     newBoardFor(room);
-    const player = { id: newId(), name: cleanName(data.playerName), socketId: null, connected: false, secret: null, rematch: false, dcTimer: null };
-    room.players.push(player);
-    rooms.set(room.code, room);
-    attachSocket(socket, room, player);
-    reply(ack, { ok: true, code: room.code, playerId: player.id });
-    sendState(room);
-  });
+    // Claim a free code (create is atomic, so two servers can't hand out the same one).
+    do { room.code = randomCode(); } while (!(await store.create(room)));
 
-  socket.on("room:join", (data = {}, ack) => {
-    if (ctx(socket)) return reply(ack, { ok: false, error: "Already in a room." });
+    await withRoom(room.code, saved => {
+      const me = findPlayer(saved, player.id);
+      attachSocket(socket, saved, me);
+      reply(ack, { ok: true, code: saved.code, playerId: me.id });
+      sendState(saved);
+    });
+  }));
+
+  socket.on("room:join", safe(async (data, ack) => {
+    if (await seated()) return fail(ack, "Already in a room.");
     const code = String(data.code || "").trim().toUpperCase();
-    const room = rooms.get(code);
-    if (!room) return reply(ack, { ok: false, error: "Room not found." });
-    if (room.players.length >= 2) return reply(ack, { ok: false, error: "Room is full." });
+    await withRoom(code, room => {
+      if (!room) return fail(ack, "Room not found.");
+      if (room.players.length >= 2) return fail(ack, "Room is full.");
+      const player = newPlayer(data.playerName);
+      room.players.push(player);
+      attachSocket(socket, room, player);
+      newBoardFor(room);
+      startPicking(room);
+      room.nextFirst = null; // new opponent = fresh game, random first turn
+      reply(ack, { ok: true, code: room.code, playerId: player.id });
+      sendState(room);
+    });
+  }));
 
-    const player = { id: newId(), name: cleanName(data.playerName), socketId: null, connected: false, secret: null, rematch: false, dcTimer: null };
-    room.players.push(player);
-    attachSocket(socket, room, player);
-    newBoardFor(room);
-    startPicking(room);
-    reply(ack, { ok: true, code: room.code, playerId: player.id });
-    sendState(room);
-  });
+  // Reconnect after a dropped socket (page reload, mobile network switch, server restart, ...).
+  socket.on("room:rejoin", safe(async (data, ack) => {
+    const code = String(data.code || "").toUpperCase();
+    await withRoom(code, room => {
+      const player = room && findPlayer(room, data.playerId);
+      if (!player) return fail(ack, "Game no longer exists.");
+      attachSocket(socket, room, player);
+      reply(ack, { ok: true, code: room.code, playerId: player.id });
+      socket.to(room.code).emit("player:reconnected", { playerId: player.id });
+      sendState(room);
+    });
+  }));
 
-  // Reconnect after a dropped socket (page reload, mobile network switch, ...).
-  socket.on("room:rejoin", (data = {}, ack) => {
-    const room = rooms.get(String(data.code || "").toUpperCase());
-    const player = room && findPlayer(room, data.playerId);
-    if (!player) return reply(ack, { ok: false, error: "Game no longer exists." });
-    attachSocket(socket, room, player);
-    reply(ack, { ok: true, code: room.code, playerId: player.id });
-    socket.to(room.code).emit("player:reconnected", { playerId: player.id });
-    sendState(room);
-  });
+  socket.on("room:leave", safe(async () => {
+    const code = socket.data.code;
+    await inRoom(socket, null, async (room, player) => {
+      socket.leave(room.code);
+      socket.data = {};
+      // Detach the leaver first so the "game over" update below only reaches the opponent;
+      // otherwise the leaver's page would jump to the result screen instead of going home.
+      player.connected = false;
+      player.socketId = null;
+      clearDcTimer(code, player.id);
+      const opp = opponentOf(room, player.id);
+      if ((room.phase === PHASE.PICKING || room.phase === PHASE.PLAYING) && opp) {
+        finishGame(room, opp.id, "forfeit");
+      }
+      room.players = room.players.filter(p => p.id !== player.id);
+      if (room.players.length === 0) return deleteRoom(room);
+      // The remaining player sees the result screen; someone new can still join with the same code.
+      io.to(room.code).emit("player:disconnected", { playerId: player.id, left: true });
+      sendState(room);
+    });
+  }));
 
-  socket.on("room:leave", () => {
-    const c = ctx(socket);
-    if (!c) return;
-    const { room, player } = c;
-    socket.leave(room.code);
-    socket.data = {};
-    const opp = opponentOf(room, player.id);
-    if ((room.phase === PHASE.PICKING || room.phase === PHASE.PLAYING) && opp) {
-      finishGame(room, opp.id, "forfeit");
-    }
-    room.players = room.players.filter(p => p.id !== player.id);
-    clearTimeout(player.dcTimer);
-    if (room.players.length === 0) return deleteRoom(room);
-    // The remaining player sees the result screen; someone new can still join with the same code.
-    io.to(room.code).emit("player:disconnected", { playerId: player.id, left: true });
-    sendState(room);
-  });
-
-  socket.on("pick:secret", (data = {}, ack) => {
-    const c = ctx(socket);
-    if (!c) return reply(ack, { ok: false, error: "Not in a room." });
-    const { room, player } = c;
-    if (room.phase !== PHASE.PICKING) return reply(ack, { ok: false, error: "Not picking right now." });
-    if (player.secret !== null) return reply(ack, { ok: false, error: "Already locked in." });
-    if (!isValidCharacter(room, data.characterId)) return reply(ack, { ok: false, error: "Invalid character." });
+  socket.on("pick:secret", safe((data, ack) => inRoom(socket, ack, (room, player) => {
+    if (room.phase !== PHASE.PICKING) return fail(ack, "Not picking right now.");
+    if (player.secret !== null) return fail(ack, "Already locked in.");
+    if (!isValidCharacter(room, data.characterId)) return fail(ack, "Invalid character.");
 
     player.secret = data.characterId;
     reply(ack, { ok: true });
 
     if (room.players.length === 2 && room.players.every(p => p.secret !== null)) {
       room.phase = PHASE.PLAYING;
-      const first = room.players[crypto.randomInt(2)].id;
+      // Rematch: the previous loser starts. Otherwise pick at random.
+      const first = room.players.some(p => p.id === room.nextFirst)
+        ? room.nextFirst
+        : room.players[crypto.randomInt(2)].id;
+      room.nextFirst = null;
       io.to(room.code).emit("game:start", { firstTurn: first });
       startTurn(room, first);
     }
     sendState(room);
-  });
+  })));
 
-  socket.on("turn:ask", (data = {}, ack) => {
-    const c = ctx(socket);
-    if (!c) return reply(ack, { ok: false, error: "Not in a room." });
-    const { room, player } = c;
-    if (room.phase !== PHASE.PLAYING) return reply(ack, { ok: false, error: "Game is not in progress." });
-    if (room.turn !== player.id) return reply(ack, { ok: false, error: "Not your turn." });
+  socket.on("turn:ask", safe((data, ack) => inRoom(socket, ack, (room, player) => {
+    if (room.phase !== PHASE.PLAYING) return fail(ack, "Game is not in progress.");
+    if (room.turn !== player.id) return fail(ack, "Not your turn.");
     const q = QUESTION_MAP.get(data.questionId);
-    if (!q) return reply(ack, { ok: false, error: "Unknown question." });
+    if (!q) return fail(ack, "Unknown question.");
 
     const opp = opponentOf(room, player.id);
     const answer = Boolean(q.test(room.board[opp.secret]));
@@ -324,29 +429,35 @@ io.on("connection", socket => {
     io.to(room.code).emit("ask:result", { playerId: player.id, questionId: q.id, answer });
     startTurn(room, opp.id);
     sendState(room);
-  });
+  })));
 
-  socket.on("turn:guess", (data = {}, ack) => {
-    const c = ctx(socket);
-    if (!c) return reply(ack, { ok: false, error: "Not in a room." });
-    const { room, player } = c;
-    if (room.phase !== PHASE.PLAYING) return reply(ack, { ok: false, error: "Game is not in progress." });
-    if (room.turn !== player.id) return reply(ack, { ok: false, error: "Not your turn." });
-    if (!isValidCharacter(room, data.characterId)) return reply(ack, { ok: false, error: "Invalid character." });
+  socket.on("turn:guess", safe((data, ack) => inRoom(socket, ack, (room, player) => {
+    if (room.phase !== PHASE.PLAYING) return fail(ack, "Game is not in progress.");
+    if (room.turn !== player.id) return fail(ack, "Not your turn.");
+    if (!isValidCharacter(room, data.characterId)) return fail(ack, "Invalid character.");
 
     const opp = opponentOf(room, player.id);
     const correct = data.characterId === opp.secret;
     room.log.push({ type: "guess", playerId: player.id, characterId: data.characterId, correct, at: Date.now() });
     reply(ack, { ok: true, correct });
     finishGame(room, correct ? player.id : opp.id, correct ? "correct-guess" : "wrong-guess");
-  });
+  })));
 
-  socket.on("rematch:request", (_data, ack) => {
-    const c = ctx(socket);
-    if (!c) return reply(ack, { ok: false, error: "Not in a room." });
-    const { room, player } = c;
-    if (room.phase !== PHASE.FINISHED) return reply(ack, { ok: false, error: "Game is not over." });
-    if (room.players.length < 2) return reply(ack, { ok: false, error: "Opponent left." });
+  // Reactions don't change the room, so they skip the lock and the save.
+  socket.on("react:send", safe(async data => {
+    if (!REACTIONS.includes(data.emoji) || !socket.data.code) return;
+    const now = Date.now();
+    if (now - (socket.data.lastReactAt || 0) < REACT_GAP_MS) return; // drop spam silently
+    const room = await store.get(socket.data.code);
+    const player = room && findPlayer(room, socket.data.playerId);
+    if (!player || player.socketId !== socket.id || room.players.length < 2) return;
+    socket.data.lastReactAt = now;
+    io.to(room.code).emit("react:show", { playerId: player.id, emoji: data.emoji });
+  }));
+
+  socket.on("rematch:request", safe((_data, ack) => inRoom(socket, ack, (room, player) => {
+    if (room.phase !== PHASE.FINISHED) return fail(ack, "Game is not over.");
+    if (room.players.length < 2) return fail(ack, "Opponent left.");
 
     player.rematch = true;
     reply(ack, { ok: true });
@@ -355,33 +466,71 @@ io.on("connection", socket => {
       startPicking(room);
     }
     sendState(room);
-  });
+  })));
 
   socket.on("disconnect", () => {
-    const room = rooms.get(socket.data.code);
-    const player = room && findPlayer(room, socket.data.playerId);
-    if (!player || player.socketId !== socket.id) return; // stale socket (e.g. replaced by a newer tab)
-
-    player.connected = false;
-    socket.to(room.code).emit("player:disconnected", { playerId: player.id, graceMs: DISCONNECT_MS });
-    sendState(room);
-
-    player.dcTimer = setTimeout(() => {
-      if (player.connected || !rooms.has(room.code)) return;
-      if (room.players.every(p => !p.connected)) return deleteRoom(room);
-      if (room.phase === PHASE.PICKING || room.phase === PHASE.PLAYING) {
-        finishGame(room, opponentOf(room, player.id).id, "forfeit");
-      }
-    }, DISCONNECT_MS);
+    const code = socket.data.code;
+    withRoom(code, room => {
+      const player = room && findPlayer(room, socket.data.playerId);
+      if (!player || player.socketId !== socket.id) return NO_SAVE; // stale socket (e.g. replaced by a newer tab)
+      player.connected = false;
+      socket.to(room.code).emit("player:disconnected", { playerId: player.id, graceMs: DISCONNECT_MS });
+      sendState(room);
+      startDcTimer(room.code, player.id);
+    }).catch(err => console.error("[disconnect]", err.message));
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Guess Who server on http://localhost:${PORT}`);
-  // Show LAN addresses so you can open the game on a phone on the same Wi-Fi.
-  for (const list of Object.values(require("os").networkInterfaces())) {
-    for (const a of list || []) {
-      if (a.family === "IPv4" && !a.internal) console.log(`  on your network: http://${a.address}:${PORT}`);
-    }
+// ---------- startup ----------
+
+// After a restart, players this server was serving are no longer connected. Mark them as away
+// and give them the usual grace period to reconnect (their pages do it automatically).
+async function recoverRooms() {
+  let count = 0;
+  for (const snapshot of await store.list()) {
+    const mine = snapshot.players.filter(p => p.connected && p.server === SERVER_ID);
+    if (!mine.length) continue;
+    await withRoom(snapshot.code, room => {
+      if (!room) return NO_SAVE;
+      for (const p of room.players) {
+        if (!p.connected || p.server !== SERVER_ID) continue;
+        p.connected = false;
+        p.socketId = null;
+        startDcTimer(room.code, p.id);
+        count++;
+      }
+    });
   }
+  if (count) console.log(`Recovered ${count} player(s) from before the restart; they have ${DISCONNECT_MS / 1000}s to reconnect.`);
+}
+
+async function main() {
+  await store.connect();
+  if (store.kind === "redis") {
+    // Share Socket.IO rooms/broadcasts between server processes through Redis pub/sub.
+    const { createAdapter } = require("@socket.io/redis-adapter");
+    const pub = store.client.duplicate();
+    const sub = store.client.duplicate();
+    pub.on("error", err => console.error("[redis pub]", err.message));
+    sub.on("error", err => console.error("[redis sub]", err.message));
+    await Promise.all([pub.connect(), sub.connect()]);
+    io.adapter(createAdapter(pub, sub));
+  }
+  await recoverRooms();
+
+  server.listen(PORT, () => {
+    console.log(`Guess Who server on http://localhost:${PORT}  (rooms stored in ${store.kind}${store.kind === "redis" ? `, server id ${SERVER_ID}` : ""})`);
+    // Show LAN addresses so you can open the game on a phone on the same Wi-Fi.
+    for (const list of Object.values(os.networkInterfaces())) {
+      for (const a of list || []) {
+        if (a.family === "IPv4" && !a.internal) console.log(`  on your network: http://${a.address}:${PORT}`);
+      }
+    }
+  });
+}
+
+main().catch(err => {
+  console.error("Failed to start:", err.message);
+  if (process.env.REDIS_URL) console.error("Is Redis running at REDIS_URL? Try: docker compose up -d redis");
+  process.exit(1);
 });

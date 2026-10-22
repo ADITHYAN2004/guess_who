@@ -4,7 +4,9 @@ const { QUESTIONS } = require("./questions");
 const BOARD_SIZE = 30;
 const MIN_YES = 3;   // every question must say "yes" for at least 10% of the board
 const MAX_YES = 24;  // and at most 80%
-const MIN_DIFF = 2;  // any two characters must differ in at least 2 traits (no near-duplicates)
+// Any two characters must LOOK clearly different: at least one big trait plus a bit more
+// (see visualDiff). This stops "spot the difference" pairs like same hair + similar skin.
+const MIN_VISUAL_DIFF = 4;
 
 const SKINS = ["light", "tan", "olive", "brown", "dark"];
 const HAIR_STYLES = ["bald", "short", "long", "curly", "ponytail", "bun"];
@@ -12,12 +14,12 @@ const HAIR_COLORS = ["black", "brown", "blond", "red", "grey"];
 const FACIAL_HAIR = ["none", "beard", "mustache"];
 
 const NAMES = {
-  female: ["Maya", "Anya", "Clara", "Priya", "Zoe", "Lena", "Ines", "Rosa", "Hana", "Nora",
-           "Yara", "Ivy", "Mia", "Tara", "Leila", "Sofia", "Amara", "June", "Kira", "Elsa",
-           "Nina", "Ruth", "Gwen", "Aiko", "Bea", "Dina", "Faye", "Lucia", "Olga", "Wren"],
-  male:   ["Omar", "Leo", "Sam", "Raj", "Hugo", "Ben", "Kofi", "Ivan", "Tom", "Diego",
-           "Max", "Eli", "Kai", "Noah", "Felix", "Arjun", "Jonas", "Theo", "Marco", "Yusuf",
-           "Paul", "Hank", "Otto", "Liam", "Bruno", "Cyrus", "Dev", "Emil", "Finn", "Gus"],
+  female: ["Aanya", "Diya", "Isha", "Kavya", "Meera", "Nisha", "Pooja", "Riya", "Sana", "Tara",
+           "Anjali", "Divya", "Gauri", "Jaya", "Lakshmi", "Neha", "Priya", "Radha", "Sita", "Uma",
+           "Asha", "Bhavna", "Chitra", "Deepa", "Esha", "Geeta", "Hema", "Indu", "Lata", "Rekha"],
+  male:   ["Aarav", "Arjun", "Dev", "Ishaan", "Kabir", "Rohan", "Vikram", "Raj", "Sameer", "Aditya",
+           "Shalin", "Karan", "Nikhil", "Varun", "Amit", "Ravi", "Sanjay", "Manoj", "Suresh", "Anil",
+           "Gopal", "Harish", "Imran", "Jatin", "Mohan", "Naveen", "Pranav", "Rakesh", "Tarun", "Vijay"],
 };
 
 const pick = arr => arr[Math.floor(Math.random() * arr.length)];
@@ -32,18 +34,31 @@ function shuffle(arr) {
   return a;
 }
 
+// Pick from { option: weight }.
+function weighted(weights) {
+  const entries = Object.entries(weights);
+  let r = Math.random() * entries.reduce((sum, [, w]) => sum + w, 0);
+  for (const [value, w] of entries) if ((r -= w) < 0) return value;
+  return entries[entries.length - 1][0];
+}
+
+// Hairstyle odds per gender, so "Female?" is easy to answer by looking: men mostly have
+// short, bald or curly hair and women mostly long hair, ponytails, buns or curls.
+// Every style still appears, so every question stays useful.
+const HAIR_ODDS = {
+  male:   { short: 4, bald: 2.6, curly: 2, long: 0.4, ponytail: 0.4 },
+  female: { long: 4, ponytail: 2, bun: 2, curly: 2, short: 0.8 },
+};
+
 function randomCharacter() {
   const gender = chance(0.5) ? "female" : "male";
-  // Bald is mostly a male trait here, and bald characters have no hair color.
-  const hairStyle = gender === "male"
-    ? pick(["bald", "short", "short", "long", "curly", "ponytail", "bun"])
-    : pick(["bald", "short", "long", "long", "curly", "ponytail", "bun"].filter(s => s !== "bald" || chance(0.3)));
-  const hairColor = hairStyle === "bald" ? "none" : pick(HAIR_COLORS);
+  const hairStyle = weighted(HAIR_ODDS[gender]);
+  const hairColor = hairStyle === "bald" ? "none" : pick(HAIR_COLORS); // bald = no hair colour
   const facialHair = gender === "female" ? "none" : pick(FACIAL_HAIR);
 
   const accessory = [];
   if (chance(0.3)) accessory.push("glasses");
-  if (chance(gender === "female" ? 0.45 : 0.15)) accessory.push("earrings");
+  if (chance(gender === "female" ? 0.5 : 0.06)) accessory.push("earrings");
 
   // A hat would hide a bald head or a bun, which makes the board unfair, so we forbid those combos.
   const hat = hairStyle !== "bald" && hairStyle !== "bun" && chance(0.25);
@@ -51,19 +66,21 @@ function randomCharacter() {
   return { gender, skin: pick(SKINS), hairStyle, hairColor, facialHair, accessory, hat };
 }
 
-// Flatten into comparable traits so we can count differences.
-function traits(c) {
-  return [
-    c.gender, c.skin, c.hairStyle, c.hairColor, c.facialHair,
-    c.accessory.includes("glasses"), c.accessory.includes("earrings"), c.hat,
-  ];
-}
-
-function diffCount(a, b) {
-  const ta = traits(a), tb = traits(b);
-  let n = 0;
-  for (let i = 0; i < ta.length; i++) if (ta[i] !== tb[i]) n++;
-  return n;
+// How different two characters LOOK. Big, obvious traits count 3, medium ones 2,
+// subtle ones 1 (lashes/lips for gender, small earrings, neighbouring skin tones).
+function visualDiff(a, b) {
+  const has = (c, item) => c.accessory.includes(item);
+  let d = 0;
+  if (a.hairStyle !== b.hairStyle) d += 3;
+  if (a.hat !== b.hat) d += 3;
+  if (has(a, "glasses") !== has(b, "glasses")) d += 3;
+  if (a.facialHair !== b.facialHair) d += 3;
+  if (a.hairColor !== b.hairColor) d += a.hat && b.hat ? 1 : 2; // less hair shows under a hat
+  if (a.gender !== b.gender) d += 1;
+  if (has(a, "earrings") !== has(b, "earrings")) d += 1;
+  const skinGap = Math.abs(SKINS.indexOf(a.skin) - SKINS.indexOf(b.skin));
+  d += Math.min(skinGap, 2);
+  return d;
 }
 
 function questionSplits(board) {
@@ -76,7 +93,7 @@ function tryBuildBoard() {
   while (board.length < BOARD_SIZE && attempts < 5000) {
     attempts++;
     const c = randomCharacter();
-    if (board.every(o => diffCount(o, c) >= MIN_DIFF)) board.push(c);
+    if (board.every(o => visualDiff(o, c) >= MIN_VISUAL_DIFF)) board.push(c);
   }
   if (board.length < BOARD_SIZE) return null;
 
@@ -95,7 +112,7 @@ function generateBoard() {
   throw new Error("Could not generate a valid board; loosen the constraints.");
 }
 
-module.exports = { generateBoard, questionSplits, diffCount, BOARD_SIZE };
+module.exports = { generateBoard, questionSplits, visualDiff, MIN_VISUAL_DIFF, BOARD_SIZE };
 
 // `npm run check-board` prints a sample board and how each question splits it.
 if (require.main === module) {

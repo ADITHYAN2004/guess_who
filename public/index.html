@@ -50,6 +50,10 @@
 
     <!-- HOME (active by default so it shows even before the script runs) -->
     <section id="screen-home" class="screen active">
+      <button class="icon-btn sound-btn home-sound" aria-haspopup="dialog" aria-expanded="false" aria-label="Music and sound" title="Music and sound">
+        <svg class="ico-sound" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>
+        <svg class="ico-muted" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="m23 9-6 6"/><path d="m17 9 6 6"/></svg>
+      </button>
       <h1 class="logo">Guess<span>the</span>Person</h1>
       <p id="welcome" class="welcome hidden"></p>
       <label class="field">
@@ -96,7 +100,11 @@
 
     <!-- PICK -->
     <section id="screen-pick" class="screen wide">
-      <header class="bar">
+      <header class="bar start">
+        <button class="icon-btn btn-leave-game" aria-label="Leave game" title="Leave game">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+          <span class="icon-label">Leave</span>
+        </button>
         <div>
           <h2>Pick your secret person</h2>
           <span id="pick-status" class="muted small"></span>
@@ -111,10 +119,22 @@
     <!-- GAME (also shows the result overlay) -->
     <section id="screen-game" class="screen wide">
       <header class="game-top">
-        <div id="turn-indicator" class="turn"></div>
-        <div class="secret-chip" title="Your secret person">
-          <span class="muted tiny">YOU ARE</span>
-          <div id="my-secret"></div>
+        <div class="game-top-left">
+          <button class="icon-btn btn-leave-game" aria-label="Leave game" title="Leave game">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+            <span class="icon-label">Leave</span>
+          </button>
+          <div id="turn-indicator" class="turn"></div>
+        </div>
+        <div class="game-top-right">
+          <button class="icon-btn sound-btn" aria-haspopup="dialog" aria-expanded="false" aria-label="Music and sound" title="Music and sound">
+            <svg class="ico-sound" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>
+            <svg class="ico-muted" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="m23 9-6 6"/><path d="m17 9 6 6"/></svg>
+          </button>
+          <div class="secret-chip" title="Your secret person">
+            <span class="muted tiny">YOU ARE</span>
+            <div id="my-secret"></div>
+          </div>
         </div>
       </header>
       <div id="opp-banner" class="banner hidden"></div>
@@ -143,6 +163,12 @@
         </aside>
       </div>
 
+      <!-- Quick reactions -->
+      <div class="react">
+        <div id="react-tray" class="react-tray hidden" role="menu" aria-label="Reactions"></div>
+        <button id="btn-react" class="react-fab" aria-haspopup="menu" aria-expanded="false" aria-label="Send a reaction">😊</button>
+      </div>
+
       <!-- Phone-only bottom actions -->
       <nav class="action-bar">
         <button id="btn-ask" class="btn primary">Ask a question</button>
@@ -160,6 +186,8 @@
         <div><div class="muted">Your person</div><div id="reveal-me"></div></div>
         <div><div class="muted">Their person</div><div id="reveal-opp"></div></div>
       </div>
+      <div id="result-summary" class="summary"></div>
+      <p id="rematch-note" class="rematch-note"></p>
       <div class="modal-actions">
         <button id="btn-rematch" class="btn primary">Rematch</button>
         <button class="btn ghost btn-leave">Leave</button>
@@ -180,9 +208,30 @@
     </div>
   </div>
 
+  <!-- Leave confirm (leaving a game in progress is a forfeit) -->
+  <div id="leave-confirm" class="overlay hidden">
+    <div class="modal">
+      <h2>Leave the game?</h2>
+      <p id="leave-text" class="muted">Your opponent will win by forfeit.</p>
+      <div class="modal-actions">
+        <button id="btn-leave-yes" class="btn danger">Leave</button>
+        <button id="btn-leave-no" class="btn ghost">Stay</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Music & sound settings (opened from the speaker buttons) -->
+  <div id="sound-menu" class="sound-menu hidden" role="dialog" aria-label="Music and sound">
+    <label class="sm-row"><span>🎵 Music</span><input type="checkbox" id="opt-music" class="switch" /></label>
+    <div id="track-list" class="track-list" role="radiogroup" aria-label="Song"></div>
+    <label class="sm-row"><span>🔔 Sound effects</span><input type="checkbox" id="opt-sfx" class="switch" /></label>
+  </div>
+
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <script src="/socket.io/socket.io.js"></script>
+  <script src="sfx.js"></script>
+  <script src="music.js"></script>
   <script src="avatar.js"></script>
   <script src="client.js"></script>
 </body>

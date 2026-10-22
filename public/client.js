@@ -106,6 +106,7 @@
   function hideOverlays() {
     $("result").classList.add("hidden");
     $("confirm").classList.add("hidden");
+    $("leave-confirm").classList.add("hidden");
   }
 
   function renderPick() {
@@ -114,6 +115,7 @@
     buildBoard($("pick-board"), "pick", id => {
       if (me().picked) return;
       selectedPick = id;
+      sfx.play("tap");
       renderPick();
     });
     const locked = me().picked;
@@ -181,6 +183,7 @@
     if (!playing) closeSheet();
 
     renderLog();
+    renderReactions();
     renderResult();
   }
 
@@ -205,9 +208,26 @@
       <ellipse cx="24" cy="21.5" rx="15" ry="3" fill="#253265"/>
       <g fill="rgba(255,255,255,.7)" stroke="#111" stroke-width="2"><rect x="8" y="28" width="13" height="10" rx="3"/><rect x="27" y="28" width="13" height="10" rx="3"/><path d="M21 32 H27" fill="none"/></g>`,
   };
-  const groupIcon = (g, firstQ) => GROUP_ICONS[g.id]
-    ? `<svg viewBox="0 0 48 48" aria-hidden="true">${GROUP_ICONS[g.id]}</svg>`
-    : (firstQ ? questionIcon(firstQ) : "");
+  // Category icons use the same portrait art as the board (the palette stays for "Hair colour").
+  const FACE_BASE = { gender: "male", skin: "tan", hairStyle: "short", hairColor: "black", facialHair: "none", accessory: [], hat: false };
+  const GROUP_FACES = {
+    person: { gender: "female", hairStyle: "long", hairColor: "black", skin: "brown", accessory: ["earrings"] },
+    hair:   { gender: "female", hairStyle: "curly", hairColor: "red", skin: "light" },
+    facial: { facialHair: "beard", hairColor: "brown" },
+    extras: { hat: true, accessory: ["glasses"], skin: "olive" },
+  };
+  const groupIconCache = new Map();
+  function groupIcon(g, firstQ) {
+    if (!groupIconCache.has(g.id)) {
+      const face = GROUP_FACES[g.id];
+      const html = face
+        ? renderAvatar({ ...FACE_BASE, ...face, id: Object.keys(GROUP_FACES).indexOf(g.id) + 1 }, { crop: true, decorative: true })
+        : GROUP_ICONS[g.id] ? `<svg viewBox="0 0 48 48" aria-hidden="true">${GROUP_ICONS[g.id]}</svg>`
+        : firstQ ? questionIcon(firstQ) : "";
+      groupIconCache.set(g.id, html);
+    }
+    return groupIconCache.get(g.id);
+  }
 
   function renderQuestions(myTurn, o) {
     const groups = state.questionGroups || [];
@@ -334,6 +354,7 @@
     };
     fill($("reveal-me"), mine);
     fill($("reveal-opp"), theirs);
+    renderSummary(o);
 
     const rb = $("btn-rematch");
     if (!o) { rb.disabled = true; rb.textContent = "Opponent left"; }
@@ -370,6 +391,7 @@
     // Manual elimination: flip the card down or back up.
     if (eliminated.has(id)) eliminated.delete(id); else eliminated.add(id);
     el.classList.toggle("down", eliminated.has(id));
+    sfx.play("flip");
     saveEliminated();
   }
 
@@ -377,6 +399,7 @@
     const tab = e.target.closest(".g-tab");
     if (!tab) return;
     selectedGroup = tab.dataset.g;
+    sfx.play("tap");
     selectedQuestion = null;
     render();
   });
@@ -385,6 +408,7 @@
     const btn = e.target.closest(".q");
     if (!btn || btn.disabled) return;
     selectedQuestion = selectedQuestion === btn.dataset.q ? null : btn.dataset.q;
+    sfx.play("tap");
     render();
   });
 
@@ -414,20 +438,33 @@
   $("btn-lock").addEventListener("click", () => {
     if (selectedPick === null) return;
     socket.emit("pick:secret", { characterId: selectedPick }, res => { if (!res?.ok) toast(res?.error || "Error"); });
+    sfx.play("tap");
   });
 
   $("btn-rematch").addEventListener("click", () => {
     socket.emit("rematch:request", {}, res => { if (!res?.ok) toast(res?.error || "Error"); });
   });
 
-  document.querySelectorAll(".btn-leave").forEach(b => b.addEventListener("click", () => {
+  function leaveRoom() {
     socket.emit("room:leave");
     closeSheet();
     store.set(SESSION, null);
     state = null;
     guessMode = false;
     render();
+  }
+  document.querySelectorAll(".btn-leave").forEach(b => b.addEventListener("click", leaveRoom));
+
+  // Leave from the pick/game screens: ask first, because the server counts it as a forfeit.
+  document.querySelectorAll(".btn-leave-game").forEach(b => b.addEventListener("click", () => {
+    const active = state && (state.phase === "PICKING" || state.phase === "PLAYING") && opp();
+    if (!active) return leaveRoom();
+    closeSheet();
+    $("leave-text").textContent = `${opp().name} will win by forfeit.`;
+    $("leave-confirm").classList.remove("hidden");
   }));
+  $("btn-leave-no").addEventListener("click", () => $("leave-confirm").classList.add("hidden"));
+  $("btn-leave-yes").addEventListener("click", () => { $("leave-confirm").classList.add("hidden"); leaveRoom(); });
 
   // ---------- home ----------
   // The player's name is saved on this device as they type, and filled in next time.
@@ -536,6 +573,133 @@
     if (warnedOffline) return;
     warnedOffline = true;
     toast(navigator.onLine ? "Can't reach the game server. Retrying…" : "You're offline. Retrying when you're back online…", 4000);
+  });
+
+  // ---------- end-of-game summary ----------
+  function renderSummary(o) {
+    const sum = state.summary || {};
+    const order = [state.me, o?.id].filter(id => id && sum[id]);
+    $("result-summary").innerHTML = order.map(id => {
+      const s = sum[id];
+      const isWinner = id === state.winnerId;
+      const q = s.best && state.questions.find(x => x.id === s.best.questionId);
+      const best = s.best
+        ? `<span class="sum-best">
+             ${q ? `<span class="mini">${questionIcon(q)}</span>` : ""}
+             <span class="sum-best-text">${isWinner ? "Winning question" : "Best question"}: <b>${esc(s.best.short)}</b>
+               <span class="ans ${s.best.answer ? "yes" : "no"}">${s.best.answer ? "✓ Yes" : "✕ No"}</span>
+               <span class="muted">ruled out ${s.best.ruledOut}</span></span>
+           </span>`
+        : `<span class="sum-best muted">No questions asked</span>`;
+      return `<div class="sum-row ${isWinner ? "winner" : ""}">
+        <div class="sum-head"><b>${isWinner ? "🏆 " : ""}${esc(nameOf(id))}</b>
+          <span class="muted">${s.asked} question${s.asked === 1 ? "" : "s"}</span></div>
+        ${best}
+      </div>`;
+    }).join("");
+
+    // Rematch: the loser starts.
+    const note = $("rematch-note");
+    if (o && state.nextFirst) {
+      note.textContent = state.nextFirst === state.me ? "🎲 You go first in the rematch." : `🎲 ${o.name} goes first in the rematch.`;
+      note.classList.remove("hidden");
+    } else {
+      note.classList.add("hidden");
+    }
+  }
+
+  // ---------- music & sound menu ----------
+  const soundMenu = $("sound-menu");
+  const TRACK_ICONS = { chai: "🍵", tabla: "🪘", arcade: "🕹️" };
+  function renderSound() {
+    const open = !soundMenu.classList.contains("hidden");
+    const silent = sfx.muted && !music.on;
+    document.querySelectorAll(".sound-btn").forEach(b => {
+      b.classList.toggle("is-muted", silent);
+      b.setAttribute("aria-expanded", String(open));
+    });
+    $("opt-music").checked = music.on;
+    $("opt-sfx").checked = !sfx.muted;
+    $("track-list").classList.toggle("off", !music.on);
+    $("track-list").innerHTML = music.tracks.map(t => {
+      const active = t.id === music.track;
+      return `<button class="track ${active ? "active" : ""}" role="radio" aria-checked="${active}" data-track="${t.id}">
+        <span class="track-icon">${TRACK_ICONS[t.id] || "🎵"}</span>
+        <span class="track-text"><b>${esc(t.name)}</b><span>${esc(t.desc)}</span></span>
+        ${active && music.on ? `<span class="eq" aria-hidden="true"><i></i><i></i><i></i></span>` : ""}
+      </button>`;
+    }).join("");
+  }
+  document.querySelectorAll(".sound-btn").forEach(b => b.addEventListener("click", e => {
+    e.stopPropagation();
+    soundMenu.classList.toggle("hidden");
+    renderSound();
+  }));
+  $("opt-music").addEventListener("change", e => { music.setOn(e.target.checked); renderSound(); });
+  $("opt-sfx").addEventListener("change", e => { sfx.setMuted(!e.target.checked); renderSound(); sfx.play("tap"); });
+  $("track-list").addEventListener("click", e => {
+    const t = e.target.closest("[data-track]");
+    if (!t) return;
+    music.setTrack(t.dataset.track);
+    if (!music.on) music.setOn(true);
+    renderSound();
+  });
+  document.addEventListener("click", e => {
+    // composedPath() still knows where the click happened even if that element was just redrawn.
+    const inside = e.composedPath().some(el => el === soundMenu || el.classList?.contains("sound-btn"));
+    if (!soundMenu.classList.contains("hidden") && !inside) {
+      soundMenu.classList.add("hidden");
+      renderSound();
+    }
+  });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") { soundMenu.classList.add("hidden"); renderSound(); } });
+  renderSound();
+
+  // ---------- quick reactions ----------
+  const tray = $("react-tray");
+  function setTray(open) {
+    tray.classList.toggle("hidden", !open);
+    $("btn-react").setAttribute("aria-expanded", String(open));
+  }
+  function renderReactions() {
+    const show = (state.phase === "PLAYING" || state.phase === "FINISHED") && state.players.length === 2;
+    document.querySelector(".react").classList.toggle("hidden", !show);
+    if (!show) setTray(false);
+    const list = state.reactions || [];
+    if (tray.dataset.list !== list.join("")) {
+      tray.dataset.list = list.join("");
+      tray.innerHTML = list.map(e => `<button class="react-opt" role="menuitem" data-emoji="${e}" aria-label="Send ${e}">${e}</button>`).join("");
+    }
+  }
+  $("btn-react").addEventListener("click", e => {
+    e.stopPropagation();
+    setTray(tray.classList.contains("hidden"));
+    sfx.play("tap");
+  });
+  tray.addEventListener("click", e => {
+    const opt = e.target.closest(".react-opt");
+    if (!opt) return;
+    socket.emit("react:send", { emoji: opt.dataset.emoji });
+    setTray(false);
+  });
+  document.addEventListener("click", e => { if (!e.target.closest(".react")) setTray(false); });
+
+  // Show a reaction floating up: yours on the right, your opponent's on the left.
+  function floatReaction(playerId, emoji) {
+    const mine = playerId === state?.me;
+    const el = document.createElement("div");
+    el.className = `react-float ${mine ? "mine" : "theirs"}`;
+    el.style.setProperty("--x", `${Math.round(Math.random() * 40 - 20)}px`);
+    el.innerHTML = `<span class="react-emoji">${emoji}</span><span class="react-who">${esc(nameOf(playerId))}</span>`;
+    document.body.appendChild(el);
+    el.addEventListener("animationend", () => el.remove());
+    setTimeout(() => el.remove(), 3000); // fallback if animations are off
+  }
+  socket.on("react:show", ({ playerId, emoji }) => {
+    if (!state) return;
+    floatReaction(playerId, emoji);
+    sfx.play("pop");
+    if (playerId !== state.me) buzz(20);
   });
 
   // ---------- rooms dashboard (home screen) ----------
@@ -656,18 +820,23 @@
   socket.on("turn:changed", ({ playerId }) => {
     if (!state) return;
     state.turn = playerId;
-    if (playerId === state.me) { toast("Your turn!", 1500); buzz(40); }
+    if (playerId === state.me) { toast("Your turn!", 1500); buzz(40); sfx.play("turn"); }
   });
 
   socket.on("ask:result", ({ playerId, questionId, answer }) => {
-    if (!state || playerId !== state.me) return;
+    if (!state) return;
+    sfx.play(answer ? "yes" : "no"); // both players hear the answer chime
+    if (playerId !== state.me) return;
     const q = state.questions.find(x => x.id === questionId);
     toast(`${q ? q.text : "Answer"} ${answer ? "YES" : "NO"}`, 3500);
     buzz(answer ? [30, 60, 30] : 80);
   });
 
   socket.on("game:over", ({ winnerId }) => {
-    if (state) buzz(winnerId === state.me ? [40, 60, 40, 60, 120] : 300);
+    if (!state) return;
+    const won = winnerId === state.me;
+    buzz(won ? [40, 60, 40, 60, 120] : 300);
+    sfx.play(won ? "win" : "lose");
   });
 
   socket.on("game:start", ({ firstTurn }) => {

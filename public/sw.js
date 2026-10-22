@@ -1,12 +1,14 @@
 // Service worker: makes the app installable and lets the shell load offline.
 // Network-first, so players always get the latest code when online; the cache is only a fallback.
 // Live game traffic (/socket.io/ polling + websockets) is never cached.
-const CACHE = "guess-who-v1";
+const CACHE = "guess-who-v3";
 const SHELL = [
   "/",
   "/style.css",
   "/client.js",
   "/avatar.js",
+  "/sfx.js",
+  "/music.js",
   "/manifest.webmanifest",
   "/icons/icon.svg",
   "/icons/icon-192.png",

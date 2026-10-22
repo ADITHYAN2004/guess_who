@@ -9,7 +9,26 @@ npm install
 npm start            # http://localhost:3000  (PORT env var to change)
 npm test             # smoke test: run while the server is up (URL env var to point elsewhere)
 npm run check-board  # print a sample board + how every question splits it
+npm run test:board   # 300 boards: no duplicates/look-alikes, unique names, useful questions
 ```
+
+## Redis (optional): keep games across restarts, run several servers
+
+Without Redis, rooms live in the server's memory: simple, but a restart ends every game.
+With Redis, rooms are saved in Redis, so:
+
+- a restarted server picks its games back up (players get 30s to reconnect, which their pages do automatically);
+- several server processes can share the same rooms and room list (Socket.IO's Redis adapter relays messages between them).
+
+```bash
+npm run redis:up      # starts Redis in Docker on port 6380 (docker-compose.yml)
+npm run start:redis   # same as: REDIS_URL=redis://localhost:6380 node server/index.js
+```
+
+Settings: `REDIS_URL` (turns Redis on), `REDIS_PREFIX` (key prefix, default `gw:`), `ROOM_TTL_SECONDS`
+(idle rooms expire, default 6h), `SERVER_ID` (stable name per server process; defaults to `hostname:port`).
+Every change to a room happens under a short per-room lock, so two servers can't overwrite each other.
+Test across two servers: `URL=http://localhost:3000 URL_B=http://localhost:3001 npm test`.
 
 Open two browser windows: Create Room in one, Join with the code in the other.
 
@@ -28,6 +47,9 @@ Open two browser windows: Create Room in one, Join with the code in the other.
 | `server/index.js` | Socket.IO server: rooms, phases (LOBBY → PICKING → PLAYING → FINISHED), no turn timer, 30s disconnect forfeit, reconnects, rematch |
 | `server/characters.js` | Board generator: 30 characters, every pair differs in ≥2 traits, every question answers "yes" for 10–80% of the board |
 | `server/questions.js` | Data-driven questions, batched into groups (Person, Hair style, Hair colour, Facial hair, Extras). Each has full text, a short caption and the example face(s) for its picture tile. Add a question here and it appears in the UI automatically |
+| `server/store.js` | Room storage: in-memory, or Redis when `REDIS_URL` is set (with per-room locks) |
+| `public/music.js` | Three original background tracks (lo-fi, Indian flute & tabla, chiptune) played live with Web Audio |
+| `public/sfx.js` | Sound effects synthesized with Web Audio (no audio files), mute saved per device |
 | `public/avatar.js` | Layered SVG face renderer (hair shape + texture, glasses, earrings, beard/mustache, hat) |
 | `public/client.js` | UI: renders server state and sends intents only |
 | `public/sw.js`, `public/manifest.webmanifest`, `public/icons/` | PWA: offline shell, install metadata, app icons (`icon.svg` is the source) |
@@ -35,9 +57,9 @@ Open two browser windows: Create Room in one, Join with the code in the other.
 
 ## Socket events
 
-Client → server: `lobby:watch` / `lobby:unwatch` (live public room list on the home screen), `room:create` (`{ playerName, private }`), `room:join`, `room:rejoin`, `room:leave`, `pick:secret`, `turn:ask`, `turn:guess`, `rematch:request`. All take an ack callback that returns `{ ok, error? }`.
+Client → server: `lobby:watch` / `lobby:unwatch` (live public room list on the home screen), `room:create` (`{ playerName, private }`), `room:join`, `room:rejoin`, `room:leave`, `pick:secret`, `turn:ask`, `turn:guess`, `rematch:request`, `react:send` (one of 6 emoji, rate-limited). All take an ack callback that returns `{ ok, error? }`.
 
-Server → client: `room:state` (a personalized view; the opponent's secret is only included once the game is FINISHED), `game:start`, `turn:changed`, `ask:result`, `game:over`, `player:disconnected`, `player:reconnected`, `lobby:rooms` (public rooms: codes, names and phases only; private rooms are never listed), `server:hello` (client build id; pages reload when it changes).
+Server → client: `room:state` (a personalized view; the opponent's secret is only included once the game is FINISHED), `game:start`, `turn:changed`, `ask:result`, `game:over`, `player:disconnected`, `player:reconnected`, `lobby:rooms` (public rooms: codes, names and phases only; private rooms are never listed), `server:hello` (client build id; pages reload when it changes), `react:show`. When a game ends, `room:state` includes `summary` (questions asked + best question per player) and `nextFirst` (the loser starts the rematch).
 
 ## Notes
 
