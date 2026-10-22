@@ -22,6 +22,9 @@ const PHASE = { LOBBY: "LOBBY", PICKING: "PICKING", PLAYING: "PLAYING", FINISHED
 // Quick reactions: a fixed set (no free text means nothing to moderate).
 const REACTIONS = ["😂", "🤔", "😱", "👏", "😎", "🙈"];
 const REACT_GAP_MS = 800; // per-player rate limit
+// Most games (rooms) at once. Load-tested on Render's free plan (0.1 CPU): smooth up to ~50-75
+// games, noticeable lag around 100. Joining an existing room is always allowed.
+const MAX_GAMES = Number(process.env.MAX_GAMES) || 100;
 const NO_SAVE = Symbol("no-save"); // returned by a room change that didn't modify anything
 
 const app = express();
@@ -193,8 +196,18 @@ function sendState(room) {
 // Private rooms and rooms with nobody connected are left out.
 const LOBBY_CHANNEL = "lobby-watchers";
 
-async function publicRoomList() {
-  return (await store.list())
+// The home-screen payload: public rooms + how full the server is.
+async function lobbyPayload() {
+  const all = await store.list();
+  return {
+    rooms: publicRoomList(all),
+    capacity: { games: all.length, max: MAX_GAMES },
+    serverNow: Date.now(),
+  };
+}
+
+function publicRoomList(all) {
+  return all
     .filter(r => !r.private && r.players.some(p => p.connected))
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 50)
@@ -214,7 +227,7 @@ function lobbyChanged() {
   lobbyTimer = setTimeout(async () => {
     lobbyTimer = null;
     try {
-      io.to(LOBBY_CHANNEL).emit("lobby:rooms", { rooms: await publicRoomList(), serverNow: Date.now() });
+      io.to(LOBBY_CHANNEL).emit("lobby:rooms", await lobbyPayload());
     } catch (err) { console.error("[lobby]", err.message); }
   }, 250);
 }
@@ -303,7 +316,7 @@ io.on("connection", socket => {
 
   socket.on("lobby:watch", safe(async () => {
     socket.join(LOBBY_CHANNEL);
-    socket.emit("lobby:rooms", { rooms: await publicRoomList(), serverNow: Date.now() });
+    socket.emit("lobby:rooms", await lobbyPayload());
   }));
   socket.on("lobby:unwatch", () => socket.leave(LOBBY_CHANNEL));
 
@@ -316,6 +329,10 @@ io.on("connection", socket => {
 
   socket.on("room:create", safe(async (data, ack) => {
     if (await seated()) return fail(ack, "Already in a room.");
+    if ((await store.count()) >= MAX_GAMES) {
+      lobbyChanged(); // make sure everyone's home screen shows "full"
+      return reply(ack, { ok: false, full: true, error: "The server is full right now. Try again in a few minutes, or join a friend's room." });
+    }
     const player = newPlayer(data.playerName);
     const room = {
       code: null,

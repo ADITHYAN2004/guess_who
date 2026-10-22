@@ -25,7 +25,7 @@ npm run redis:up      # starts Redis in Docker on port 6380 (docker-compose.yml)
 npm run start:redis   # same as: REDIS_URL=redis://localhost:6380 node server/index.js
 ```
 
-Settings: `REDIS_URL` (turns Redis on), `REDIS_PREFIX` (key prefix, default `gw:`), `ROOM_TTL_SECONDS`
+Settings: `MAX_GAMES` (games at once before new rooms are refused with "Server full", default 100), `REDIS_URL` (turns Redis on), `REDIS_PREFIX` (key prefix, default `gw:`), `ROOM_TTL_SECONDS`
 (idle rooms expire, default 6h), `SERVER_ID` (stable name per server process; defaults to `hostname:port`).
 Every change to a room happens under a short per-room lock, so two servers can't overwrite each other.
 Test across two servers: `URL=http://localhost:3000 URL_B=http://localhost:3001 npm test`.

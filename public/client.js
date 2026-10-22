@@ -501,7 +501,11 @@
   }
 
   function onJoined(res) {
-    if (!res?.ok) return toast(res?.error || "Could not join.");
+    if (res?.full) {
+      serverCapacity = { games: serverCapacity?.max ?? 1, max: serverCapacity?.max ?? 1 };
+      renderCapacity();
+    }
+    if (!res?.ok) return toast(res?.error || "Could not join.", res?.full ? 5000 : 2600);
     store.set(SESSION, { code: res.code, playerId: res.playerId });
   }
 
@@ -769,11 +773,27 @@
     });
   });
 
-  socket.on("lobby:rooms", ({ rooms, serverNow }) => {
+  socket.on("lobby:rooms", ({ rooms, serverNow, capacity }) => {
     lobbyRooms = rooms;
     lobbyClockOffset = serverNow - Date.now();
+    if (capacity) { serverCapacity = capacity; renderCapacity(); }
     renderRooms();
   });
+
+  // ---------- server capacity (max games at once) ----------
+  let serverCapacity = null;
+  function renderCapacity() {
+    const cap = serverCapacity;
+    const full = !!cap && cap.games >= cap.max;
+    $("full-banner").classList.toggle("hidden", !full);
+    const create = $("btn-create");
+    create.disabled = full;
+    create.textContent = full ? "Server full" : "Create Room";
+    const el = $("rooms-capacity");
+    el.textContent = cap ? `${cap.games} / ${cap.max} games` : "";
+    el.classList.toggle("busy", !!cap && cap.games >= cap.max * 0.8);
+    el.classList.toggle("full", full);
+  }
   setInterval(() => { if (watchingLobby) renderRooms(); }, 30_000); // keep "x min ago" fresh
 
   // ---------- socket events ----------

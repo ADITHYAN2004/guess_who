@@ -12,6 +12,8 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "20"
+      - key: MAX_GAMES          # games at once before "Server full" (free plan lags around 100)
+        value: "100"
       - key: REDIS_URL         # turns on Redis storage (see server/store.js)
         fromService:
           type: keyvalue

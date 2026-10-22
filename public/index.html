@@ -60,6 +60,10 @@
         <span>Your name</span>
         <input id="name-input" maxlength="16" placeholder="Enter your name" autocomplete="nickname" enterkeyhint="done" required />
       </label>
+      <div id="full-banner" class="full-banner hidden" role="status">
+        <b>🚦 The server is full</b>
+        <span>All games are in use right now. Try again in a few minutes, or join a friend's room below.</span>
+      </div>
       <button id="btn-create" class="btn primary big">Create Room</button>
       <label class="check">
         <input type="checkbox" id="private-input" />
@@ -76,7 +80,10 @@
       <section class="rooms" aria-labelledby="rooms-title">
         <div class="rooms-head">
           <h2 id="rooms-title">Rooms</h2>
-          <span class="live"><i></i>Live</span>
+          <span class="rooms-meta">
+            <span id="rooms-capacity" class="capacity" title="Games in use on this server"></span>
+            <span class="live"><i></i>Live</span>
+          </span>
         </div>
         <div id="rooms-list" aria-live="polite"><p class="rooms-empty">Loading rooms…</p></div>
       </section>

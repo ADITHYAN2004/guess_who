@@ -48,6 +48,7 @@ class MemoryStore {
   async save(room) { this.rooms.set(room.code, clone(room)); }
   async delete(code) { this.rooms.delete(code); }
   async list() { return [...this.rooms.values()].map(clone); }
+  async count() { return this.rooms.size; }
   lock(code) { return this.lockLocal(code); }
   // One process only: every server it knows about is itself, and it's alive.
   async markAlive() {}
@@ -93,6 +94,8 @@ class RedisStore {
   async delete(code) {
     await this.client.multi().del(this.key(code)).sRem(this.setKey, code).exec();
   }
+  // Number of rooms (may briefly include a just-expired one until list() tidies the set).
+  async count() { return this.client.sCard(this.setKey); }
   async list() {
     const codes = await this.client.sMembers(this.setKey);
     if (!codes.length) return [];
