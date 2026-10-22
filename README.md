@@ -29,6 +29,19 @@ Settings: `REDIS_URL` (turns Redis on), `REDIS_PREFIX` (key prefix, default `gw:
 (idle rooms expire, default 6h), `SERVER_ID` (stable name per server process; defaults to `hostname:port`).
 Every change to a room happens under a short per-room lock, so two servers can't overwrite each other.
 Test across two servers: `URL=http://localhost:3000 URL_B=http://localhost:3001 npm test`.
+Servers send a heartbeat to Redis every 10s; if one stops (crash or redeploy), another server marks its
+players as away and gives them the usual 30s to reconnect.
+
+## Deploy on Render
+
+`render.yaml` sets up the game server and a free Key Value (Redis) store, both in Singapore.
+
+1. Push this repo to GitHub.
+2. In Render: **New → Blueprint**, pick the repo, then **Apply**.
+3. Open the `guess-who` service's URL (HTTPS, so phones can install the app).
+
+Render fills in `REDIS_URL` automatically. The free web service sleeps after ~15 minutes without visitors;
+games are kept in Key Value while it sleeps.
 
 Open two browser windows: Create Room in one, Join with the code in the other.
 

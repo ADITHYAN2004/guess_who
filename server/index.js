@@ -481,6 +481,46 @@ io.on("connection", socket => {
   });
 });
 
+// ---------- server heartbeats (Redis) ----------
+// Each server checks in every few seconds. If a server stops checking in (crash, redeploy on
+// a host like Render, scaled down), any other server marks its players as away and starts
+// their usual grace period, so rooms never get stuck with "connected" ghosts.
+const HEARTBEAT_MS = 10_000;
+const HEARTBEAT_TTL_S = 30;
+
+async function sweepDeadServers() {
+  const rooms = await store.list();
+  const others = new Set();
+  for (const r of rooms) for (const p of r.players) if (p.connected && p.server !== SERVER_ID) others.add(p.server);
+  if (!others.size) return;
+  const alive = await store.aliveServers([...others].filter(Boolean));
+  for (const snapshot of rooms) {
+    if (!snapshot.players.some(p => p.connected && p.server !== SERVER_ID && !alive.has(p.server))) continue;
+    await withRoom(snapshot.code, room => {
+      if (!room) return NO_SAVE;
+      let changed = false;
+      for (const p of room.players) {
+        if (!p.connected || p.server === SERVER_ID || alive.has(p.server)) continue;
+        p.connected = false;
+        p.socketId = null;
+        io.to(room.code).emit("player:disconnected", { playerId: p.id, graceMs: DISCONNECT_MS });
+        startDcTimer(room.code, p.id);
+        changed = true;
+      }
+      if (!changed) return NO_SAVE;
+      sendState(room);
+    });
+  }
+}
+
+function startHeartbeat() {
+  if (store.kind !== "redis") return;
+  const beat = () => store.markAlive(SERVER_ID, HEARTBEAT_TTL_S).catch(err => console.error("[heartbeat]", err.message));
+  beat();
+  setInterval(beat, HEARTBEAT_MS).unref();
+  setInterval(() => sweepDeadServers().catch(err => console.error("[sweep]", err.message)), HEARTBEAT_MS * 2).unref();
+}
+
 // ---------- startup ----------
 
 // After a restart, players this server was serving are no longer connected. Mark them as away
@@ -517,6 +557,7 @@ async function main() {
     io.adapter(createAdapter(pub, sub));
   }
   await recoverRooms();
+  startHeartbeat();
 
   server.listen(PORT, () => {
     console.log(`Guess Who server on http://localhost:${PORT}  (rooms stored in ${store.kind}${store.kind === "redis" ? `, server id ${SERVER_ID}` : ""})`);

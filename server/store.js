@@ -49,6 +49,9 @@ class MemoryStore {
   async delete(code) { this.rooms.delete(code); }
   async list() { return [...this.rooms.values()].map(clone); }
   lock(code) { return this.lockLocal(code); }
+  // One process only: every server it knows about is itself, and it's alive.
+  async markAlive() {}
+  async aliveServers(ids) { return new Set(ids); }
 }
 
 // Deletes the lock only if we still own it (another server may have taken it after expiry).
@@ -97,6 +100,16 @@ class RedisStore {
     const expired = codes.filter((_, i) => !raws[i]);
     if (expired.length) await this.client.sRem(this.setKey, expired);
     return raws.filter(Boolean).map(r => JSON.parse(r));
+  }
+
+  // Heartbeats: each server refreshes a short-lived key; if it stops (crash, deploy), the key expires.
+  async markAlive(serverId, ttlSeconds) {
+    await this.client.set(`${this.prefix}server:${serverId}`, String(Date.now()), { EX: ttlSeconds });
+  }
+  async aliveServers(ids) {
+    if (!ids.length) return new Set();
+    const vals = await this.client.mGet(ids.map(id => `${this.prefix}server:${id}`));
+    return new Set(ids.filter((_, i) => vals[i]));
   }
 
   // Lock = in-process queue + a short Redis lock (SET NX PX) shared by all servers.

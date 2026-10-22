@@ -1,0 +1,26 @@
+# Render Blueprint: the game server + a Key Value (Redis-compatible) store.
+# Deploy: push this repo to GitHub, then in Render: New → Blueprint → pick the repo.
+services:
+  - type: web
+    name: guess-who
+    runtime: node
+    plan: free                 # free web services sleep after ~15 min idle (first visit then takes ~1 min)
+    region: singapore          # closest Render region to India; must match the Key Value region
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: REDIS_URL         # turns on Redis storage (see server/store.js)
+        fromService:
+          type: keyvalue
+          name: guess-who-kv
+          property: connectionString
+
+  - type: keyvalue
+    name: guess-who-kv
+    plan: free                 # 25 MB (thousands of rooms); free instances keep data in memory only
+    region: singapore
+    maxmemoryPolicy: noeviction  # never silently drop rooms; idle rooms expire on their own (6h)
+    ipAllowList: []            # no outside access: only your Render services can connect
