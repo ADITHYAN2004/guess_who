@@ -161,7 +161,9 @@
               <span id="ask-text" class="ask-text"></span>
               <button id="btn-ask-confirm" class="btn primary" disabled>Ask</button>
             </div>
+            <button class="btn primary full desktop-only btn-end hidden">End turn ➡️</button>
             <button class="btn danger full desktop-only btn-guess">Make Final Guess</button>
+            <button class="btn full desktop-only btn-poke hidden">👉 Poke</button>
           </div>
           <div class="panel">
             <h3>Log</h3>
@@ -179,7 +181,9 @@
       <!-- Phone-only bottom actions -->
       <nav class="action-bar">
         <button id="btn-ask" class="btn primary">Ask a question</button>
+        <button class="btn primary btn-end hidden">End turn ➡️</button>
         <button class="btn danger btn-guess">Guess</button>
+        <button class="btn btn-poke hidden">👉 Poke</button>
       </nav>
     </section>
   </div>
@@ -232,6 +236,24 @@
     <label class="sm-row"><span>🎵 Music</span><input type="checkbox" id="opt-music" class="switch" /></label>
     <div id="track-list" class="track-list" role="radiogroup" aria-label="Song"></div>
     <label class="sm-row"><span>🔔 Sound effects</span><input type="checkbox" id="opt-sfx" class="switch" /></label>
+  </div>
+
+  <!-- Big YES / NO stamp after every question (doesn't block taps) -->
+  <div id="stamp" class="stamp hidden" role="status" aria-live="polite">
+    <div id="stamp-who" class="stamp-who"></div>
+    <div id="stamp-pic" class="stamp-pic"></div>
+    <div id="stamp-q" class="stamp-q"></div>
+    <div id="stamp-ans" class="stamp-ans"></div>
+    <div id="stamp-left" class="stamp-left"></div>
+  </div>
+
+  <!-- Drumroll reveal for the final guess -->
+  <div id="suspense" class="overlay suspense hidden" aria-live="assertive">
+    <div class="suspense-box">
+      <p id="suspense-title" class="suspense-title"></p>
+      <div id="suspense-card" class="suspense-card"></div>
+      <div id="suspense-verdict" class="verdict"></div>
+    </div>
   </div>
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>

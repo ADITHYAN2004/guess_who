@@ -22,6 +22,7 @@ const PHASE = { LOBBY: "LOBBY", PICKING: "PICKING", PLAYING: "PLAYING", FINISHED
 // Quick reactions: a fixed set (no free text means nothing to moderate).
 const REACTIONS = ["😂", "🤔", "😱", "👏", "😎", "🙈"];
 const REACT_GAP_MS = 800; // per-player rate limit
+const POKE_GAP_MS = 8000; // one poke every 8s at most
 // Most games (rooms) at once. Load-tested on Render's free plan (0.1 CPU): smooth up to ~50-75
 // games, noticeable lag around 100. Joining an existing room is always allowed.
 const MAX_GAMES = Number(process.env.MAX_GAMES) || 100;
@@ -148,6 +149,7 @@ function viewFor(room, player) {
     questions: PUBLIC_QUESTIONS,
     questionGroups: GROUPS,
     turn: room.turn,
+    askedThisTurn: Boolean(room.askedThisTurn),
     log: room.log,
     mySecret: player.secret,
     winnerId: room.winnerId,
@@ -191,7 +193,7 @@ function buildSummary(room) {
         best = { questionId: q.id, short: q.short, text: q.text, answer: e.answer, ruledOut, left: remaining.length };
       }
     }
-    out[p.id] = { asked, best };
+    out[p.id] = { asked, best, left: remaining.length };
   }
   return out;
 }
@@ -246,8 +248,11 @@ function lobbyChanged() {
 }
 
 // No turn timer: a turn lasts until the player asks or guesses.
+// A turn: ask at most one question, then guess or end the turn. A guess is allowed
+// at any point during your own turn (before or after asking).
 function startTurn(room, playerId) {
   room.turn = playerId;
+  room.askedThisTurn = false;
   io.to(room.code).emit("turn:changed", { playerId });
 }
 
@@ -260,9 +265,14 @@ function finishGame(room, winnerId, reason) {
   // The loser goes first in a rematch.
   room.nextFirst = room.players.find(p => p.id !== winnerId)?.id ?? null;
   for (const p of room.players) p.rematch = false;
+  const last = room.log[room.log.length - 1];
+  const guess = reason.endsWith("guess") && last?.type === "guess"
+    ? { playerId: last.playerId, characterId: last.characterId, correct: last.correct }
+    : null;
   io.to(room.code).emit("game:over", {
     winnerId,
     reason,
+    guess,
     secrets: Object.fromEntries(room.players.map(p => [p.id, p.secret])),
   });
   sendState(room);
@@ -275,6 +285,7 @@ function startPicking(room) {
   room.winnerId = null;
   room.reason = null;
   room.summary = null;
+  room.askedThisTurn = false;
   for (const p of room.players) { p.secret = null; p.rematch = false; }
 }
 
@@ -449,17 +460,47 @@ io.on("connection", socket => {
   socket.on("turn:ask", safe((data, ack) => inRoom(socket, ack, (room, player) => {
     if (room.phase !== PHASE.PLAYING) return fail(ack, "Game is not in progress.");
     if (room.turn !== player.id) return fail(ack, "Not your turn.");
+    if (room.askedThisTurn) return fail(ack, "You already asked this turn. Make a guess or end your turn.");
     const q = QUESTION_MAP.get(data.questionId);
     if (!q) return fail(ack, "Unknown question.");
 
     const opp = opponentOf(room, player.id);
     const answer = Boolean(q.test(room.board[opp.secret]));
+    // People still possible from the asker's point of view, before and after this answer.
+    // (Not secret: the opponent can work this out from the same board and answers.)
+    const before = room.board.length - ruledOutFor(room, player.id).length;
     room.log.push({ type: "ask", playerId: player.id, questionId: q.id, text: q.text, answer, at: Date.now() });
-    reply(ack, { ok: true, answer });
-    io.to(room.code).emit("ask:result", { playerId: player.id, questionId: q.id, answer });
-    startTurn(room, opp.id);
+    const left = room.board.length - ruledOutFor(room, player.id).length;
+    room.log[room.log.length - 1].left = left;
+    room.askedThisTurn = true; // the turn stays with the asker: now guess or end the turn
+    reply(ack, { ok: true, answer, left });
+    io.to(room.code).emit("ask:result", { playerId: player.id, questionId: q.id, answer, before, left });
     sendState(room);
   })));
+
+  socket.on("turn:end", safe((_data, ack) => inRoom(socket, ack, (room, player) => {
+    if (room.phase !== PHASE.PLAYING) return fail(ack, "Game is not in progress.");
+    if (room.turn !== player.id) return fail(ack, "Not your turn.");
+    if (!room.askedThisTurn) return fail(ack, "Ask a question or make a guess first.");
+    reply(ack, { ok: true });
+    startTurn(room, opponentOf(room, player.id).id);
+    sendState(room);
+  })));
+
+  // Poke: nudge an opponent who is taking a long time. Doesn't change the room.
+  socket.on("poke:send", safe(async (_data, ack) => {
+    if (!socket.data.code) return fail(ack, "Not in a room.");
+    const room = await store.get(socket.data.code);
+    const player = room && findPlayer(room, socket.data.playerId);
+    if (!player || player.socketId !== socket.id) return fail(ack, "Not in a room.");
+    const opp = opponentOf(room, player.id);
+    if (room.phase !== PHASE.PLAYING || !opp || room.turn !== opp.id) return fail(ack, "You can only poke while it's their turn.");
+    const now = Date.now();
+    if (now - (socket.data.lastPokeAt || 0) < POKE_GAP_MS) return fail(ack, "Give them a few seconds before poking again.");
+    socket.data.lastPokeAt = now;
+    if (opp.socketId) io.to(opp.socketId).emit("poke:show", { from: player.name });
+    reply(ack, { ok: true });
+  }));
 
   socket.on("turn:guess", safe((data, ack) => inRoom(socket, ack, (room, player) => {
     if (room.phase !== PHASE.PLAYING) return fail(ack, "Game is not in progress.");

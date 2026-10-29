@@ -67,6 +67,14 @@
     win:   () => [523, 659, 784, 1047].forEach((f, i) => tone(f, i * 0.11, 0.32, { type: "triangle", gain: 0.15 })),
     lose:  () => [392, 330, 262].forEach((f, i) => tone(f, i * 0.17, 0.38, { type: "sawtooth", gain: 0.05 })),
     pop:   () => tone(500, 0, 0.1, { slideTo: 1100, gain: 0.12 }),
+    stamp: () => { tone(150, 0, 0.18, { slideTo: 70, gain: 0.22 }); swish(0.06, 0.12, 900); },
+    poke:  () => { tone(700, 0, 0.08, { type: "square", gain: 0.05 }); tone(940, 0.1, 0.1, { type: "square", gain: 0.05 }); },
+    // ~1.7s snare-style roll that gets louder, ending on a crash
+    drum:  () => {
+      for (let i = 0; i < 26; i++) tone(95 + (i % 2) * 12, i * 0.062, 0.07, { type: "triangle", gain: 0.04 + i * 0.004 });
+      tone(55, 1.62, 0.5, { slideTo: 40, gain: 0.25 });
+      setTimeout(() => swish(0.45, 0.2, 5000), 1620);
+    },
   };
 
   window.sfx = {

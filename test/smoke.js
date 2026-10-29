@@ -50,8 +50,17 @@ const nextState = (s, pred = () => true) => new Promise(res => {
   assert(ruled.length > 0 && ruled.every(id => (sb.board[id].gender === "female") !== wantFemale), "ruled-out cards match the answer");
   assert(ask.ok, "ask accepted");
   assert.strictEqual(ask.answer, sb.board[firstSecretTarget].gender === "female", "auto-answer correct");
+  assert.strictEqual(ask.left, 30 - ruled.length, "people-left count matches the ruled-out cards");
 
-  // Second player guesses correctly and wins.
+  // One question per turn: the turn stays with the asker until they guess or end it.
+  const again = await emit(first, "turn:ask", { questionId: "glasses" });
+  assert(!again.ok && /already asked/.test(again.error), "only one question per turn");
+  const early = await emit(second, "turn:guess", { characterId: 0 });
+  assert(!early.ok && early.error === "Not your turn.", "opponent can't guess during my turn");
+  const ended = await emit(first, "turn:end", {});
+  assert(ended.ok, "end turn after asking");
+
+  // Second player guesses correctly (before asking, which is allowed) and wins.
   const overP = new Promise(res => first.once("game:over", res));
   const g = await emit(second, "turn:guess", { characterId: first === a ? 3 : 7 });
   assert(g.ok && g.correct, "correct guess");

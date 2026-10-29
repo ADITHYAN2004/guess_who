@@ -2,6 +2,15 @@
 
 Two-player online "Guess Who". The server is authoritative: it owns the board, both secrets, the turn order, the answers and the win check.
 
+## How a turn works
+
+1. **Ask one question** (pick a category, then a picture, then **Ask**). Everyone sees a big YES / NO stamp, and the cards your answers rule out flip down and lock.
+2. Then either **guess** or tap **End turn**. You can make your final guess at any point during your own turn, before or after asking.
+3. A final guess plays a drumroll reveal on both screens: right = you win (confetti!), wrong = you lose.
+
+While you wait, **👉 Poke** nudges a slow opponent (once every 8s), and emoji reactions float up on both screens.
+The result screen shows each player's best question and fun titles (🕵️ Sherlock, 🍀 Lucky guess, 🔮 Mind reader, 😅 So close…).
+
 ## Run
 
 ```bash
@@ -70,7 +79,7 @@ Open two browser windows: Create Room in one, Join with the code in the other.
 
 ## Socket events
 
-Client → server: `lobby:watch` / `lobby:unwatch` (live public room list on the home screen), `room:create` (`{ playerName, private }`), `room:join`, `room:rejoin`, `room:leave`, `pick:secret`, `turn:ask`, `turn:guess`, `rematch:request`, `react:send` (one of 6 emoji, rate-limited). All take an ack callback that returns `{ ok, error? }`.
+Client → server: `turn:end` (after asking), `poke:send`, `lobby:watch` / `lobby:unwatch` (live public room list on the home screen), `room:create` (`{ playerName, private }`), `room:join`, `room:rejoin`, `room:leave`, `pick:secret`, `turn:ask`, `turn:guess`, `rematch:request`, `react:send` (one of 6 emoji, rate-limited). All take an ack callback that returns `{ ok, error? }`.
 
 Server → client: `room:state` (a personalized view; the opponent's secret is only included once the game is FINISHED), `game:start`, `turn:changed`, `ask:result`, `game:over`, `player:disconnected`, `player:reconnected`, `lobby:rooms` (public rooms: codes, names and phases only; private rooms are never listed), `server:hello` (client build id; pages reload when it changes), `react:show`. When a game ends, `room:state` includes `summary` (questions asked + best question per player) and `nextFirst` (the loser starts the rematch).
 

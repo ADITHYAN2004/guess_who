@@ -144,9 +144,13 @@
     const o = opp();
     if (!myTurn) guessMode = false;
 
-    // Turn indicator
+    // Turn indicator. A turn = ask one question, then guess or end the turn
+    // (a guess is allowed at any point during your own turn).
+    const askedNow = myTurn && state.askedThisTurn;
     const ti = $("turn-indicator");
-    ti.textContent = !playing ? "Game over" : myTurn ? "Your turn" : `${o?.name || "Opponent"}'s turn`;
+    ti.textContent = !playing ? "Game over"
+      : myTurn ? (askedNow ? "Guess or end turn" : "Your turn")
+      : `${o?.name || "Opponent"}'s turn`;
     ti.classList.toggle("mine", myTurn);
 
     // Opponent connection banner
@@ -188,11 +192,23 @@
 
     renderQuestions(myTurn, o);
 
+    const waiting = playing && !myTurn && !!o; // opponent's turn: Poke takes Guess's place
     document.querySelectorAll(".btn-guess").forEach(gb => {
       gb.disabled = !myTurn;
+      gb.classList.toggle("hidden", waiting);
       gb.textContent = guessMode ? "Cancel" : gb.classList.contains("desktop-only") ? "Make Final Guess" : "Guess";
     });
-    $("btn-ask").textContent = myTurn ? "Ask a question" : "Questions & log";
+    document.querySelectorAll(".btn-end").forEach(b => b.classList.toggle("hidden", !askedNow));
+    document.querySelectorAll(".btn-poke").forEach(b => {
+      b.classList.toggle("hidden", !waiting);
+      b.textContent = b.classList.contains("desktop-only") ? `👉 Poke ${o?.name || "them"}` : "👉 Poke";
+    });
+    // On phones, once you've asked, "Ask a question" shrinks to a 📋 button (log still reachable)
+    // and "End turn" takes the main spot.
+    const askBtn = $("btn-ask");
+    askBtn.classList.toggle("compact", askedNow);
+    askBtn.textContent = askedNow ? "📋" : myTurn ? "Ask a question" : "Questions & log";
+    askBtn.setAttribute("aria-label", askedNow ? "Questions & log" : askBtn.textContent);
     if (!playing) closeSheet();
 
     renderLog();
@@ -246,7 +262,7 @@
     const groups = state.questionGroups || [];
     if (!groups.some(g => g.id === selectedGroup)) selectedGroup = groups[0]?.id ?? null;
     const asked = new Map(state.log.filter(e => e.type === "ask" && e.playerId === state.me).map(e => [e.questionId, e.answer]));
-    if (!myTurn || guessMode || asked.has(selectedQuestion)) selectedQuestion = null;
+    if (!myTurn || guessMode || state.askedThisTurn || asked.has(selectedQuestion)) selectedQuestion = null;
 
     // Category icons, with a counter of how many you've asked in each.
     $("q-groups").innerHTML = groups.map(g => {
@@ -261,7 +277,7 @@
     }).join("");
 
     // Pictures for the open category.
-    const canAsk = myTurn && !guessMode;
+    const canAsk = myTurn && !guessMode && !state.askedThisTurn; // one question per turn
     $("questions").innerHTML = state.questions.filter(q => q.group === selectedGroup).map(q => {
       const a = asked.get(q.id);
       const cls = [a === undefined ? "" : a ? "asked-yes" : "asked-no", q.id === selectedQuestion ? "selected" : ""].join(" ");
@@ -277,11 +293,12 @@
     // Confirm bar: shows the full question for the picked picture.
     const sel = state.questions.find(q => q.id === selectedQuestion);
     $("ask-text").textContent = sel ? `“${sel.text}”`
+      : myTurn && state.askedThisTurn ? "You've asked this turn. Now make a guess or end your turn."
       : myTurn ? "Pick a category, then a picture."
       : `Waiting for ${o?.name || "opponent"}…`;
     $("ask-bar").classList.toggle("ready", !!sel);
     $("btn-ask-confirm").disabled = !sel;
-    $("questions-title").textContent = myTurn ? "Ask a question" : "Questions";
+    $("questions-title").textContent = myTurn && !state.askedThisTurn ? "Ask a question" : "Questions";
   }
 
   // Question pictures are built from the same face renderer as the board, cached per question.
@@ -300,7 +317,8 @@
     if (e.type === "ask") {
       const q = state.questions.find(x => x.id === e.questionId);
       const pic = q ? `<span class="mini">${questionIcon(q)}</span>` : "";
-      return `<span class="entry">${pic}<span class="entry-text"><b>${who}</b> asked ${esc(q ? q.short : e.text)}</span>${chip(e.answer, "Yes", "No")}</span>`;
+      const left = Number.isInteger(e.left) ? `<span class="muted"> · ${e.left} left</span>` : "";
+      return `<span class="entry">${pic}<span class="entry-text"><b>${who}</b> asked ${esc(q ? q.short : e.text)}${left}</span>${chip(e.answer, "Yes", "No")}</span>`;
     }
     if (e.type === "guess") {
       const c = charById(e.characterId);
@@ -342,6 +360,7 @@
   function renderResult() {
     const box = $("result");
     if (state.phase !== "FINISHED") { box.classList.add("hidden"); return; }
+    if (Date.now() < suspenseUntil) { box.classList.add("hidden"); return; } // drumroll still playing
     $("confirm").classList.add("hidden");
     box.classList.remove("hidden");
 
@@ -446,6 +465,18 @@
     guessMode = !guessMode;
     closeSheet();
     render();
+  }));
+  document.querySelectorAll(".btn-end").forEach(b => b.addEventListener("click", () => {
+    closeSheet();
+    guessMode = false;
+    socket.emit("turn:end", {}, res => { if (!res?.ok) toast(res?.error || "Error"); });
+    sfx.play("tap");
+  }));
+  document.querySelectorAll(".btn-poke").forEach(b => b.addEventListener("click", () => {
+    socket.emit("poke:send", {}, res => {
+      if (res?.ok) { toast(`👉 You poked ${opp()?.name || "them"}!`, 1600); sfx.play("tap"); }
+      else toast(res?.error || "Couldn't poke right now.");
+    });
   }));
   $("btn-cancel-guess").addEventListener("click", () => { guessMode = false; render(); });
   $("btn-confirm-no").addEventListener("click", () => { pendingGuess = null; $("confirm").classList.add("hidden"); });
@@ -617,10 +648,12 @@
                <span class="muted">ruled out ${s.best.ruledOut}</span></span>
            </span>`
         : `<span class="sum-best muted">No questions asked</span>`;
+      const titles = funTitles(s, isWinner).map(t => `<span class="title-badge">${t}</span>`).join("");
       return `<div class="sum-row ${isWinner ? "winner" : ""}">
         <div class="sum-head"><b>${isWinner ? "🏆 " : ""}${esc(nameOf(id))}</b>
           <span class="muted">${s.asked} question${s.asked === 1 ? "" : "s"}</span></div>
         ${best}
+        ${titles ? `<div class="titles">${titles}</div>` : ""}
       </div>`;
     }).join("");
 
@@ -632,6 +665,113 @@
     } else {
       note.classList.add("hidden");
     }
+  }
+
+  // Fun end-of-game titles, from each player's stats.
+  function funTitles(s, isWinner) {
+    const out = [];
+    const reason = state.reason;
+    if (isWinner && reason === "correct-guess") {
+      if (s.asked === 0) out.push("🔮 Mind reader");
+      else if (s.left >= 5) out.push("🍀 Lucky guess");
+      else if (s.asked <= 3) out.push("🕵️ Sherlock");
+      else if (s.asked >= 8) out.push("🐢 Slow & steady");
+    }
+    if (isWinner && reason === "wrong-guess") out.push("🛡️ Unbreakable");
+    if (isWinner && reason === "forfeit") out.push("🏳️ Won by walkover");
+    if (!isWinner && reason === "wrong-guess") out.push("🙈 Oops!");
+    if (!isWinner && reason === "correct-guess" && s.left <= 2 && s.asked > 0) out.push("😅 So close!");
+    if (s.best && s.best.ruledOut >= 12) out.push("💥 Big-brain question");
+    return out;
+  }
+
+  // ---------- big YES / NO stamp after every question ----------
+  let stampTimer;
+  function showStamp({ playerId, questionId, answer, before, left }) {
+    const q = state.questions.find(x => x.id === questionId);
+    const mine = playerId === state.me;
+    const el = $("stamp");
+    $("stamp-who").textContent = mine ? "You asked" : `${nameOf(playerId)} asked`;
+    $("stamp-pic").innerHTML = q ? questionIcon(q) : "";
+    $("stamp-q").textContent = q ? q.short : "";
+    const ans = $("stamp-ans");
+    ans.textContent = answer ? "YES ✓" : "NO ✕";
+    ans.className = `stamp-ans ${answer ? "yes" : "no"}`;
+    // A fun line about how much that answer narrowed things down.
+    let line = "";
+    if (Number.isInteger(left)) {
+      if (mine) {
+        if (left === 1) line = "🎯 Only one left. Guess now!";
+        else if (before - left >= Math.max(4, Math.ceil(before / 2))) line = `🔥 Great question! ${left} people left`;
+        else if (before === left) line = `🤷 No luck, still ${left} left`;
+        else line = `🔎 ${left} people left`;
+      } else if (left <= 3) {
+        line = `😬 ${nameOf(playerId)} is down to ${left}!`;
+      }
+    }
+    $("stamp-left").textContent = line;
+    el.classList.remove("hidden", "show");
+    void el.offsetWidth; // restart the animation
+    el.classList.add("show");
+    clearTimeout(stampTimer);
+    stampTimer = setTimeout(() => el.classList.add("hidden"), 2100);
+  }
+
+  // ---------- drumroll reveal for the final guess ----------
+  let suspenseUntil = 0;
+  function playSuspense({ playerId, characterId, correct }, winnerId, secrets) {
+    const SUSPENSE_MS = 3000, REVEAL_MS = 1800;
+    suspenseUntil = Date.now() + SUSPENSE_MS;
+    closeSheet();
+    $("confirm").classList.add("hidden");
+    const mine = playerId === state?.me;
+    const guessed = charById(characterId);
+    const targetId = secrets && Object.entries(secrets).find(([pid]) => pid !== playerId)?.[1];
+    const actual = Number.isInteger(targetId) ? charById(targetId) : null;
+    $("suspense-title").textContent = mine ? "🥁 You guessed…" : `🥁 ${nameOf(playerId)} guessed…`;
+    const card = $("suspense-card");
+    card.innerHTML = "";
+    card.appendChild(makeCard(guessed, "static"));
+    card.className = "suspense-card shaking";
+    const verdict = $("suspense-verdict");
+    verdict.className = "verdict";
+    verdict.textContent = "";
+    $("suspense").classList.remove("hidden");
+    sfx.play("drum");
+    setTimeout(() => {
+      card.className = `suspense-card ${correct ? "right" : "wrong"}`;
+      verdict.textContent = correct ? `✅ Correct! It's ${guessed.name}!` : `❌ Wrong! It was ${actual ? actual.name : "someone else"}`;
+      verdict.className = `verdict show ${correct ? "yes" : "no"}`;
+      const won = winnerId === state?.me;
+      sfx.play(won ? "win" : "lose");
+      buzz(won ? [40, 60, 40, 60, 120] : 300);
+    }, REVEAL_MS);
+    setTimeout(() => {
+      $("suspense").classList.add("hidden");
+      if (state) render();
+      if (winnerId === state?.me) confetti();
+    }, SUSPENSE_MS);
+  }
+
+  // ---------- confetti for the winner ----------
+  function confetti() {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const colors = ["#ffcc4d", "#ff6b6b", "#4ade80", "#60a5fa", "#c084fc", "#f472b6"];
+    const layer = document.createElement("div");
+    layer.className = "confetti";
+    layer.setAttribute("aria-hidden", "true");
+    for (let i = 0; i < 90; i++) {
+      const bit = document.createElement("i");
+      const size = 6 + Math.random() * 7;
+      bit.style.cssText = `left:${Math.random() * 100}%;width:${size}px;height:${size * (Math.random() < 0.5 ? 0.45 : 1)}px;background:${colors[i % colors.length]};border-radius:${Math.random() < 0.3 ? "50%" : "2px"}`;
+      bit.animate([
+        { transform: `translate(0, -10vh) rotate(0deg)`, opacity: 1 },
+        { transform: `translate(${(Math.random() - 0.5) * 30}vw, 105vh) rotate(${Math.random() * 900 - 450}deg)`, opacity: 0.9 },
+      ], { duration: 1800 + Math.random() * 1600, delay: Math.random() * 400, easing: "cubic-bezier(.2,.6,.4,1)", fill: "forwards" });
+      layer.appendChild(bit);
+    }
+    document.body.appendChild(layer);
+    setTimeout(() => layer.remove(), 4200);
   }
 
   // ---------- music & sound menu ----------
@@ -865,20 +1005,32 @@
     if (playerId === state.me) { toast("Your turn!", 1500); buzz(40); sfx.play("turn"); }
   });
 
-  socket.on("ask:result", ({ playerId, questionId, answer }) => {
+  socket.on("ask:result", result => {
     if (!state) return;
-    sfx.play(answer ? "yes" : "no"); // both players hear the answer chime
-    if (playerId !== state.me) return;
-    const q = state.questions.find(x => x.id === questionId);
-    toast(`${q ? q.text : "Answer"} ${answer ? "YES" : "NO"}`, 3500);
-    buzz(answer ? [30, 60, 30] : 80);
+    sfx.play("stamp");
+    sfx.play(result.answer ? "yes" : "no"); // both players hear the answer
+    showStamp(result);
+    if (result.playerId === state.me) buzz(result.answer ? [30, 60, 30] : 80);
   });
 
-  socket.on("game:over", ({ winnerId }) => {
+  socket.on("game:over", ({ winnerId, guess, secrets }) => {
     if (!state) return;
+    if (guess) return playSuspense(guess, winnerId, secrets); // drumroll, then the result
     const won = winnerId === state.me;
     buzz(won ? [40, 60, 40, 60, 120] : 300);
     sfx.play(won ? "win" : "lose");
+    if (won) setTimeout(confetti, 300);
+  });
+
+  // Someone poked you: shake the screen a little.
+  socket.on("poke:show", ({ from }) => {
+    toast(`👉 ${from} poked you! Your move.`, 2600);
+    sfx.play("poke");
+    buzz([60, 40, 60]);
+    const app = $("app");
+    app.classList.remove("poked");
+    void app.offsetWidth;
+    app.classList.add("poked");
   });
 
   socket.on("game:start", ({ firstTurn }) => {
