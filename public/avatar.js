@@ -2,14 +2,14 @@
 // Every attribute has a distinct *shape*, and hair colour also gets a texture (patterns in
 // index.html), so the board stays readable for colourblind players.
 (function () {
-  // Skin tones are spaced well apart so neighbours on the board never look the same.
+  // Three skin tones, far apart so "light" and "dark" are never a judgement call.
   const SKIN = {
-    light: { base: "#f9dcc8", shade: "#e9bfa5" },
-    tan:   { base: "#e8b98e", shade: "#d19a6c" },
-    olive: { base: "#c69a63", shade: "#a87d4a" },
-    brown: { base: "#9a6340", shade: "#7e4c2d" },
-    dark:  { base: "#5c3721", shade: "#452815" },
+    light:  { base: "#f9dcc8", shade: "#e9bfa5" },
+    medium: { base: "#c98f5b", shade: "#ab7444" },
+    dark:   { base: "#5e3820", shade: "#462815" },
   };
+  // Older rooms (from before the 3-tone change) may still use these names.
+  SKIN.tan = SKIN.medium; SKIN.olive = SKIN.medium; SKIN.brown = SKIN.dark;
   // Hair: base colour, highlight and the eyebrow colour that matches it.
   const HAIR = {
     black: { base: "#2a2321", hi: "#544641", brow: "#1d1715" },
@@ -79,7 +79,7 @@
 
   // ---------- face ----------
   function face(c) {
-    const s = SKIN[c.skin] || SKIN.tan;
+    const s = SKIN[c.skin] || SKIN.medium;
     const female = c.gender === "female";
     const brow = (HAIR[c.hairColor] || HAIR.none).brow;
     const iris = IRIS[(c.id || 0) % IRIS.length];
@@ -167,8 +167,9 @@
 
   // ---------- body ----------
   function body(c) {
-    const s = SKIN[c.skin] || SKIN.tan;
+    const s = SKIN[c.skin] || SKIN.medium;
     const id = c.id || 0;
+    const female = c.gender === "female";
     const shirt = SHIRT[(id * 3) % SHIRT.length];
     const neckline = [
       // V-neck
@@ -181,8 +182,13 @@
     return `
       <path d="M43 70 L57 70 L57.5 87 L42.5 87 Z" fill="${s.base}"/>
       <path d="M43 74 Q50 79 57 74 L57 78 Q50 82 43 78 Z" fill="${s.shade}" opacity=".7"/>
-      <path d="M13 110 Q14 90 34 85.5 Q42 84 44 84.5 L50 90 L56 84.5 Q58 84 66 85.5 Q86 90 87 110 Z" fill="${shirt}"/>
-      <path d="M13 110 Q14 90 34 85.5 L36 110 Z" fill="rgba(255,255,255,.08)"/>
+      ${female
+        // narrower, rounder shoulders
+        ? `<path d="M19 110 Q20 92 36 87 Q42 85 44 85 L50 90 L56 85 Q58 85 64 87 Q80 92 81 110 Z" fill="${shirt}"/>
+           <path d="M19 110 Q20 92 36 87 L38 110 Z" fill="rgba(255,255,255,.08)"/>`
+        // broad, squarer shoulders
+        : `<path d="M10 110 Q11 89 33 85 Q42 83.6 44 84.5 L50 90 L56 84.5 Q58 83.6 67 85 Q89 89 90 110 Z" fill="${shirt}"/>
+           <path d="M10 110 Q11 89 33 85 L35 110 Z" fill="rgba(255,255,255,.08)"/>`}
       ${neckline}`;
   }
 

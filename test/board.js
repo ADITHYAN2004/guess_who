@@ -17,9 +17,18 @@ for (let i = 0; i < BOARDS; i++) {
     }
   }
   for (const c of board) {
-    if (c.gender === "female") assert.strictEqual(c.facialHair, "none", "no facial hair on female characters");
-    if (c.hairStyle === "bald") assert(!c.hat && c.hairColor === "none", "bald characters show their head");
-    if (c.hairStyle === "bun") assert(!c.hat, "a hat would hide a bun");
+    // Gender must be readable at a glance, so hairstyles follow gender.
+    if (c.gender === "female") {
+      assert.strictEqual(c.facialHair, "none", "no facial hair on women");
+      assert(["long", "ponytail", "bun", "curly"].includes(c.hairStyle), `woman with ${c.hairStyle} hair`);
+    } else {
+      assert(["short", "bald", "curly"].includes(c.hairStyle), `man with ${c.hairStyle} hair`);
+      assert(!c.accessory.includes("earrings"), "earrings only on women");
+    }
+    assert(["light", "medium", "dark"].includes(c.skin), `skin tone ${c.skin}`);
+    if (c.hairStyle === "bald") assert(c.hairColor === "none", "bald = no hair colour");
+    // Hats only where the hair still clearly shows (not bald, bun or short hair).
+    if (c.hat) assert(["long", "ponytail", "curly"].includes(c.hairStyle), `hat on ${c.hairStyle} hair`);
   }
   for (const s of questionSplits(board)) {
     assert(s.yes >= 3 && s.yes <= 24, `question ${s.id} splits the board badly (${s.yes} yes)`);

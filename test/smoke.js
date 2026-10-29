@@ -41,7 +41,13 @@ const nextState = (s, pred = () => true) => new Promise(res => {
   assert(!bad.ok && bad.error === "Not your turn.", "turn validated on server");
 
   // Ask a question; answer must match the opponent's character.
+  const firstState = nextState(first, x => x.log.length === 1);
   const ask = await emit(first, "turn:ask", { questionId: "female" });
+  // Cards ruled out by that answer: never the opponent's real person, and all of the other gender.
+  const ruled = (await firstState).ruledOut;
+  assert(!ruled.includes(firstSecretTarget), "the real secret is never ruled out");
+  const wantFemale = sb.board[firstSecretTarget].gender === "female";
+  assert(ruled.length > 0 && ruled.every(id => (sb.board[id].gender === "female") !== wantFemale), "ruled-out cards match the answer");
   assert(ask.ok, "ask accepted");
   assert.strictEqual(ask.answer, sb.board[firstSecretTarget].gender === "female", "auto-answer correct");
 

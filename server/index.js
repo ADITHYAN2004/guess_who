@@ -154,9 +154,22 @@ function viewFor(room, player) {
     reason: room.reason,
     secrets: finished ? Object.fromEntries(room.players.map(p => [p.id, p.secret])) : null,
     summary: finished ? room.summary : null,
+    ruledOut: ruledOutFor(room, player.id),
     nextFirst: finished ? room.nextFirst : null,
     reactions: REACTIONS,
   };
+}
+
+// Characters this player's own answers have ruled out (they can't be the opponent's person).
+// Only uses the player's own questions, so it reveals nothing they don't already know.
+function ruledOutFor(room, playerId) {
+  if (room.phase !== PHASE.PLAYING && room.phase !== PHASE.FINISHED) return [];
+  const asks = room.log
+    .filter(e => e.type === "ask" && e.playerId === playerId)
+    .map(e => ({ q: QUESTION_MAP.get(e.questionId), answer: e.answer }))
+    .filter(a => a.q);
+  if (!asks.length) return [];
+  return room.board.filter(c => asks.some(a => Boolean(a.q.test(c)) !== a.answer)).map(c => c.id);
 }
 
 // End-of-game stats per player: how many questions they asked, and their best question

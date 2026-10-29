@@ -8,7 +8,8 @@ const MAX_YES = 24;  // and at most 80%
 // (see visualDiff). This stops "spot the difference" pairs like same hair + similar skin.
 const MIN_VISUAL_DIFF = 4;
 
-const SKINS = ["light", "tan", "olive", "brown", "dark"];
+// Three clearly different skin tones, so "Light skin?" / "Dark skin?" are never a judgement call.
+const SKINS = ["light", "medium", "dark"];
 const HAIR_STYLES = ["bald", "short", "long", "curly", "ponytail", "bun"];
 const HAIR_COLORS = ["black", "brown", "blond", "red", "grey"];
 const FACIAL_HAIR = ["none", "beard", "mustache"];
@@ -46,9 +47,12 @@ function weighted(weights) {
 // short, bald or curly hair and women mostly long hair, ponytails, buns or curls.
 // Every style still appears, so every question stays useful.
 const HAIR_ODDS = {
-  male:   { short: 4, bald: 2.6, curly: 2, long: 0.4, ponytail: 0.4 },
-  female: { long: 4, ponytail: 2, bun: 2, curly: 2, short: 0.8 },
+  male:   { short: 4, bald: 2.5, curly: 2 },
+  female: { long: 4, ponytail: 2, bun: 2, curly: 2 },
 };
+// Hats only go on hair that still shows clearly underneath (short hair would vanish,
+// a bald head or a bun would be hidden).
+const HAT_OK = ["long", "ponytail", "curly"];
 
 function randomCharacter() {
   const gender = chance(0.5) ? "female" : "male";
@@ -58,16 +62,15 @@ function randomCharacter() {
 
   const accessory = [];
   if (chance(0.3)) accessory.push("glasses");
-  if (chance(gender === "female" ? 0.5 : 0.06)) accessory.push("earrings");
+  if (gender === "female" && chance(0.5)) accessory.push("earrings");
 
-  // A hat would hide a bald head or a bun, which makes the board unfair, so we forbid those combos.
-  const hat = hairStyle !== "bald" && hairStyle !== "bun" && chance(0.25);
+  const hat = HAT_OK.includes(hairStyle) && chance(0.35);
 
   return { gender, skin: pick(SKINS), hairStyle, hairColor, facialHair, accessory, hat };
 }
 
 // How different two characters LOOK. Big, obvious traits count 3, medium ones 2,
-// subtle ones 1 (lashes/lips for gender, small earrings, neighbouring skin tones).
+// subtle ones 1 (lashes/lips for gender, small earrings).
 function visualDiff(a, b) {
   const has = (c, item) => c.accessory.includes(item);
   let d = 0;
@@ -78,8 +81,7 @@ function visualDiff(a, b) {
   if (a.hairColor !== b.hairColor) d += a.hat && b.hat ? 1 : 2; // less hair shows under a hat
   if (a.gender !== b.gender) d += 1;
   if (has(a, "earrings") !== has(b, "earrings")) d += 1;
-  const skinGap = Math.abs(SKINS.indexOf(a.skin) - SKINS.indexOf(b.skin));
-  d += Math.min(skinGap, 2);
+  if (a.skin !== b.skin) d += 2; // the three tones are far apart
   return d;
 }
 

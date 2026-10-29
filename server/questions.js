@@ -5,7 +5,7 @@
 //           and drawn with the same renderer as the board characters.
 //   test  - runs on the server only and is never sent to clients.
 const ICON_BASE = {
-  gender: "male", skin: "tan", hairStyle: "short", hairColor: "black",
+  gender: "male", skin: "medium", hairStyle: "short", hairColor: "black",
   facialHair: "none", accessory: [], hat: false,
 };
 
@@ -30,7 +30,7 @@ const QUESTIONS = [
     icon: [{ gender: "female", hairStyle: "bun", accessory: ["earrings"] }],
     test: c => c.accessory.includes("earrings") },
   { id: "hat", group: "extras",       text: "Are they wearing a hat?",     short: "Hat?",
-    icon: [{ hat: true }],
+    icon: [{ hat: true, hairStyle: "curly" }],
     test: c => c.hat },
   { id: "bald", group: "hair",      text: "Are they bald?",              short: "Bald?",
     icon: [{ hairStyle: "bald", hairColor: "none" }],
@@ -44,7 +44,8 @@ const QUESTIONS = [
   { id: "facial", group: "facial",    text: "Do they have any facial hair?", short: "Any facial hair?",
     icon: [{ facialHair: "beard" }, { facialHair: "mustache" }],
     test: c => c.facialHair !== "none" },
-  { id: "longhair", group: "hair",  text: "Is their hair long?",         short: "Long hair?",
+  // "Long straight hair" = worn loose. Ponytails/buns and curls are separate questions.
+  { id: "longhair", group: "hair",  text: "Do they have long, straight hair worn loose?", short: "Long straight hair?",
     icon: [{ gender: "female", hairStyle: "long" }],
     test: c => c.hairStyle === "long" },
   { id: "curly", group: "hair",     text: "Is their hair curly?",        short: "Curly hair?",
@@ -65,10 +66,10 @@ const QUESTIONS = [
   { id: "grey", group: "color",      text: "Do they have grey hair?",     short: "Grey hair?",
     icon: [{ hairColor: "grey" }],
     test: c => c.hairColor === "grey" },
-  { id: "darkskin", group: "person",  text: "Is their skin brown or dark?", short: "Brown or dark skin?",
-    icon: [{ skin: "brown" }, { skin: "dark" }],
-    test: c => c.skin === "brown" || c.skin === "dark" },
-  { id: "lightskin", group: "person", text: "Is their skin light?",        short: "Light skin?",
+  { id: "darkskin", group: "person",  text: "Do they have dark skin?",     short: "Dark skin?",
+    icon: [{ skin: "dark" }],
+    test: c => c.skin === "dark" },
+  { id: "lightskin", group: "person", text: "Do they have light skin?",    short: "Light skin?",
     icon: [{ skin: "light" }],
     test: c => c.skin === "light" },
 ];

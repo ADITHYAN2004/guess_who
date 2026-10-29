@@ -12,6 +12,7 @@
   let selectedPick = null;   // card chosen on the pick screen (before Lock In)
   let guessMode = false;
   let pendingGuess = null;
+  let lockedBoardId = null;    // board whose ruled-out cards we've already shown (for the flip sound)
   let selectedGroup = null;    // question category currently open
   let selectedQuestion = null; // picture tapped, waiting for "Ask"
   let eliminated = new Set();
@@ -162,7 +163,19 @@
     const board = $("game-board");
     buildBoard(board, "game", onGameCardClick);
     board.classList.toggle("guess-mode", guessMode);
-    board.querySelectorAll(".card").forEach(el => el.classList.toggle("down", eliminated.has(Number(el.dataset.id))));
+    // Cards your answers ruled out flip down by themselves and stay locked.
+    const ruledOut = new Set(state.ruledOut || []);
+    let newlyLocked = 0;
+    board.querySelectorAll(".card").forEach(el => {
+      const id = Number(el.dataset.id);
+      const locked = ruledOut.has(id);
+      if (locked && !el.classList.contains("locked")) newlyLocked++;
+      el.classList.toggle("locked", locked);
+      el.classList.toggle("down", locked || eliminated.has(id));
+      el.setAttribute("aria-label", `${charById(id).name}${locked ? ", ruled out" : eliminated.has(id) ? ", flipped down" : ""}`);
+    });
+    if (newlyLocked && lockedBoardId === state.boardId) sfx.play("flip");
+    lockedBoardId = state.boardId;
     $("guess-hint").classList.toggle("hidden", !guessMode);
 
     // Secret card
@@ -209,12 +222,12 @@
       <g fill="rgba(255,255,255,.7)" stroke="#111" stroke-width="2"><rect x="8" y="28" width="13" height="10" rx="3"/><rect x="27" y="28" width="13" height="10" rx="3"/><path d="M21 32 H27" fill="none"/></g>`,
   };
   // Category icons use the same portrait art as the board (the palette stays for "Hair colour").
-  const FACE_BASE = { gender: "male", skin: "tan", hairStyle: "short", hairColor: "black", facialHair: "none", accessory: [], hat: false };
+  const FACE_BASE = { gender: "male", skin: "medium", hairStyle: "short", hairColor: "black", facialHair: "none", accessory: [], hat: false };
   const GROUP_FACES = {
-    person: { gender: "female", hairStyle: "long", hairColor: "black", skin: "brown", accessory: ["earrings"] },
+    person: { gender: "female", hairStyle: "long", hairColor: "black", skin: "dark", accessory: ["earrings"] },
     hair:   { gender: "female", hairStyle: "curly", hairColor: "red", skin: "light" },
     facial: { facialHair: "beard", hairColor: "brown" },
-    extras: { hat: true, accessory: ["glasses"], skin: "olive" },
+    extras: { hat: true, hairStyle: "curly", accessory: ["glasses"], skin: "medium" },
   };
   const groupIconCache = new Map();
   function groupIcon(g, firstQ) {
@@ -379,6 +392,15 @@
   // ---------- game interactions ----------
   function onGameCardClick(id, el) {
     if (state.phase !== "PLAYING") return;
+    // Ruled out by an answer: it can't be their person, so it can't be flipped back up or guessed.
+    if (el.classList.contains("locked")) {
+      el.classList.remove("nope");
+      void el.offsetWidth; // restart the shake
+      el.classList.add("nope");
+      buzz(30);
+      toast(`${charById(id).name} is ruled out by your answers.`, 1800);
+      return;
+    }
     if (guessMode) {
       if (eliminated.has(id)) return;
       pendingGuess = id;

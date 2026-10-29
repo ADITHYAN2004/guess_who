@@ -78,4 +78,5 @@ Server → client: `room:state` (a personalized view; the opponent's secret is o
 
 - Rooms live in memory (`Map`), so a restart wipes them. Move to Redis before running more than one server instance.
 - Reconnects: the client stores `{ code, playerId }` in localStorage and sends `room:rejoin` on every socket connect.
-- Card flip-downs are client-side only and saved per board, so they survive a reload.
+- Cards your answers rule out flip down automatically and stay locked (the server sends `ruledOut`, worked out from your own questions only). Other cards can be flipped by hand; those flips are saved per board, so they survive a reload.
+- Characters: 3 skin tones (light, medium, dark); men have short, bald or curly hair and women long, ponytail, bun or curly hair, so "Female?" is easy to answer by looking; hats only on hair that still shows.

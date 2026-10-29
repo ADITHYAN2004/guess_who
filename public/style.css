@@ -212,6 +212,14 @@ input.invalid { border-color: var(--danger); animation: shake .35s; }
 .card .name { background: #fff; color: #222; text-align: center; font-weight: 700; font-size: clamp(9px, 2.6vw, 13px); padding: 2px 0 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card .back { transform: rotateX(180deg); background: #3d4b8f; }
 .card .back svg { width: 100%; height: 100%; display: block; }
+/* Ruled out by an answer: locked face-down, with a small ✕ so it reads differently from a manual flip */
+.card.locked { cursor: not-allowed; }
+.card.locked .back::after {
+  content: "✕"; position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: clamp(16px, 5vw, 30px); font-weight: 900; color: rgba(255,255,255,.55);
+}
+.card.nope .inner { animation: nope .35s; }
+@keyframes nope { 25% { translate: -4px 0; } 50% { translate: 4px 0; } 75% { translate: -2px 0; } }
 .card.selected .face { border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
 .card.static { cursor: default; }
 .guess-mode .card:not(.down) .face { border-color: var(--danger); animation: wiggle .6s ease-in-out infinite alternate; }
